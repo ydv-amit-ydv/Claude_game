@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Labyrinth</title>
+<style>
+:root{
+  --bg:#f6ecd6; --bg2:#eddcb3; --ink:#3a2c1a; --dim:#8a7452; --gold:#c8862a; --gold2:#e8ad3f;
+  --panel:rgba(255,250,238,.86); --line:rgba(120,80,30,.28); --good:#3f9d5b; --bad:#d1425a;
+  --wall1:#5b3a24; --wall2:#7a4e2c; --floor1:#f4e6c4; --floor2:#eddbb1; --safe:env(safe-area-inset-bottom,0px)
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,"Segoe UI",Roboto,sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none;touch-action:none}
+body{background:radial-gradient(ellipse at 50% 0%,var(--bg2),var(--bg) 70%)}
+canvas#g{position:fixed;inset:0;width:100%;height:100%}
+.hud{position:fixed;padding:9px 13px;background:var(--panel);border:1px solid var(--line);border-radius:10px;backdrop-filter:blur(6px);box-shadow:0 3px 14px rgba(80,50,10,.12);pointer-events:none}
+#top{left:10px;top:10px}
+#top b{font:700 16px Georgia,"Iowan Old Style",serif;color:var(--gold)}
+#top div{color:var(--dim);font-size:12.5px;margin-top:1px}
+#gold{color:var(--gold)!important;font-weight:700}
+#lb{right:10px;top:10px;min-width:170px}
+#lb h4{font:700 13px Georgia,serif;color:var(--gold);margin-bottom:5px}
+#lb ol{list-style:none}
+#lb li{display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:1px 0}
+#lb li span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100px}
+#lb li.fin span:last-child{color:var(--good);font-weight:700}
+#lb li span:last-child{color:var(--gold)}
+#lb .me{margin-top:6px;padding-top:6px;border-top:1px solid var(--line);color:var(--dim)}
+#toast{position:fixed;left:50%;top:13%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;z-index:2}
+#toast div{background:var(--panel);border:1px solid var(--line);padding:7px 16px;border-radius:8px;animation:tin .25s ease-out;transition:opacity .5s;font-weight:600;box-shadow:0 3px 12px rgba(80,50,10,.14)}
+#toast .good{border-color:var(--good);color:#1c6b38}
+#toast .bad{border-color:var(--bad);color:#93233b}
+@keyframes tin{from{transform:translateY(-6px);opacity:0}}
+#help{position:fixed;right:10px;bottom:calc(10px + var(--safe));color:var(--dim);font-size:12px;text-align:right;pointer-events:none;max-width:260px}
+#banner{position:fixed;left:0;right:0;top:32%;text-align:center;font:700 32px Georgia,"Iowan Old Style",serif;color:var(--gold);text-shadow:0 2px 18px rgba(200,134,42,.35);pointer-events:none;display:none}
+#banner small{display:block;font:14px system-ui;color:var(--ink);text-shadow:none;margin-top:6px;font-weight:400}
+.ov{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(60,42,18,.35);z-index:5}
+.card{width:min(400px,92vw);background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px;box-shadow:0 12px 40px rgba(70,45,10,.25)}
+.card h1{font:700 40px Georgia,"Iowan Old Style",serif;color:var(--gold);letter-spacing:.5px}
+.card p{color:var(--dim);margin:9px 0 18px}
+.card input{width:100%;padding:12px 13px;font:inherit;font-size:16px;color:var(--ink);background:#fffaf0;border:1px solid var(--line);border-radius:8px;outline:0}
+.card input:focus{border-color:var(--gold)}
+.card button{margin-top:13px;width:100%;padding:12px;font:700 16px system-ui;color:#3a2308;background:linear-gradient(180deg,var(--gold2),var(--gold));border:0;border-radius:8px;cursor:pointer;box-shadow:0 4px 14px rgba(200,134,42,.4)}
+.card button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+#end{display:none}
+#end ol{margin:8px 0 0 20px}
+#end h3{font:700 15px Georgia,serif;color:var(--gold);margin-top:14px}
+#status{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);color:var(--bad);display:none;font-weight:600}
+#pad{position:fixed;left:50%;bottom:calc(14px + var(--safe));transform:translateX(-50%);display:none;grid-template-columns:repeat(3,58px);grid-template-rows:repeat(2,58px);gap:6px;z-index:3}
+#pad button{background:rgba(200,134,42,.18);border:1px solid var(--line);border-radius:12px;color:var(--gold);font-size:22px;box-shadow:0 2px 8px rgba(80,50,10,.1)}
+#pad button:active{background:rgba(200,134,42,.42)}
+#scorebar{position:fixed;left:50%;top:10px;transform:translateX(-50%);text-align:center}
+#scorebar b{font:700 14px Georgia,serif;color:var(--gold)}
+@media (max-width:640px){
+  #top{font-size:12px;padding:7px 10px}#top b{font-size:14px}
+  #lb{min-width:130px;padding:7px 9px}#lb li span:first-child{max-width:70px}
+  .card{padding:20px}.card h1{font-size:32px}
+  #help{display:none}
+}
+@media (pointer:coarse){#pad{display:grid}#help{display:none}}
+@media (prefers-reduced-motion:reduce){#toast div{animation:none}}
+</style>
+</head>
+<body>
+<canvas id="g"></canvas>
+<div id="top" class="hud"><b id="rnd">Labyrinth</b><div id="tm"></div><div id="on"></div><div>Gold: <span id="gold">0</span></div></div>
+<div id="lb" class="hud"><h4>Leaderboard</h4><ol id="lbl"></ol><div class="me" id="me"></div></div>
+<div id="toast"></div>
+<div id="banner"></div>
+<div id="help">Move with WASD or arrow keys.<br>Grab chests for gold, dodge the thieves, reach the golden exit.</div>
+<div id="status"></div>
+<div id="pad"><span></span><button data-d="0">▲</button><span></span><button data-d="3">◀</button><button data-d="2">▼</button><button data-d="1">▶</button></div>
+
+<div id="login" class="ov"><div class="card">
+  <h1>Labyrinth</h1>
+  <p>See the whole maze, grab gold from chests, dodge the thieves, and race to the glowing exit before the clock runs out.</p>
+  <input id="nm" maxlength="16" placeholder="Your name" autocomplete="off">
+  <button id="go">Enter the maze</button>
+</div></div>
+
+<div id="end" class="ov"><div class="card">
+  <h1 id="et">Round over</h1>
+  <h3>Finishers</h3><ol id="er"></ol>
+  <h3>Top scores</h3><ol id="es"></ol>
+  <p id="en" style="margin:16px 0 0"></p>
+</div></div>
+
+<script>
+'use strict';
+const SERVER = new URLSearchParams(location.search).get('server') || '';
+const $ = id => document.getElementById(id);
+const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
+const cv = $('g'), ctx = cv.getContext('2d');
+let dpr = 1;
+
+// ---------- world state
+let W = 39, H = 39, MI = 110, ROUND_MAX = 240;
+let grid = null, goal = 0, gx = 0, gy = 0;
+let chests = new Map(), thieves = new Map();
+let staticLayer = null, staticCtx = null, T = 12, offX = 0, offY = 0;
+let me = { id: 0, hue: 200 }, roster = {}, others = new Map();
+let px = 0, py = 0, dispX = 0, dispY = 0, seq = 0, lastMove = 0, gold = 0;
+let phase = 'play', finished = null, joined = false, name = '';
+const held = [], effects = [];
+let flash = 0, goodFlash = 0, endAt = 0;
+
+// ---------- lighting-free light palette
+function buildStatic() {
+  staticLayer = document.createElement('canvas');
+  const cell = Math.max(6, Math.min(26, Math.floor(Math.min(innerWidth, innerHeight - 40) / Math.max(W, H))));
+  T = cell;
+  staticLayer.width = W * T; staticLayer.height = H * T;
+  staticCtx = staticLayer.getContext('2d');
+  const sc = staticCtx;
+  sc.fillStyle = '#e9d8ab'; sc.fillRect(0, 0, staticLayer.width, staticLayer.height);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const wall = grid[y * W + x] === 1;
+      sc.fillStyle = wall ? ((x + y) % 2 ? '#5b3a24' : '#66422a') : ((x ^ y) & 1 ? '#f4e6c4' : '#eedcaf');
+      sc.fillRect(x * T, y * T, T, T);
+      if (wall) {
+        sc.fillStyle = 'rgba(255,255,255,.06)'; sc.fillRect(x * T, y * T, T, Math.max(1, T * .18));
+        sc.fillStyle = 'rgba(0,0,0,.18)'; sc.fillRect(x * T, y * T + T - Math.max(1, T * .16), T, Math.max(1, T * .16));
+      }
+    }
+  }
+  // goal glow
+  const gxp = gx * T + T / 2, gyp = gy * T + T / 2;
+  const rg = sc.createRadialGradient(gxp, gyp, 0, gxp, gyp, T * 3.4);
+  rg.addColorStop(0, 'rgba(255,214,110,.9)'); rg.addColorStop(.5, 'rgba(255,190,70,.35)'); rg.addColorStop(1, 'rgba(255,190,70,0)');
+  sc.fillStyle = rg; sc.fillRect(gxp - T * 3.4, gyp - T * 3.4, T * 6.8, T * 6.8);
+  sc.fillStyle = '#3f9d5b'; sc.beginPath(); sc.arc(gxp, gyp, T * .42, 0, 6.283); sc.fill();
+  sc.strokeStyle = '#fff4d6'; sc.lineWidth = Math.max(1, T * .1); sc.beginPath(); sc.arc(gxp, gyp, T * .42, 0, 6.283); sc.stroke();
+}
+
+function fitOffsets() {
+  const cw = innerWidth, ch = innerHeight;
+  offX = (cw - staticLayer.width) / 2;
+  offY = (ch - staticLayer.height) / 2 + 6;
+}
+
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  if (grid) { buildStatic(); fitOffsets(); }
+}
+addEventListener('resize', resize); resize();
+
+// ---------- audio
+let ac;
+function beep(f0, f1, d, type = 'sine', v = .07, delay = 0) {
+  try {
+    ac = ac || new AudioContext();
+    const t0 = ac.currentTime + delay, o = ac.createOscillator(), g = ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(f0, t0); o.frequency.exponentialRampToValueAtTime(f1, t0 + d);
+    g.gain.setValueAtTime(v, t0); g.gain.exponentialRampToValueAtTime(.0001, t0 + d);
+    o.connect(g).connect(ac.destination); o.start(t0); o.stop(t0 + d);
+  } catch (e) {}
+}
+
+// ---------- UI helpers
+function toast(msg, cls) {
+  const d = document.createElement('div'); d.textContent = msg; if (cls) d.className = cls;
+  $('toast').appendChild(d);
+  setTimeout(() => { d.style.opacity = 0; setTimeout(() => d.remove(), 500); }, 3200);
+  while ($('toast').children.length > 4) $('toast').firstChild.remove();
+}
+function banner(html) { const b = $('banner'); b.innerHTML = html; b.style.display = html ? 'block' : 'none'; }
+const fmt = s => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+
+// ---------- networking
+let ws, hb;
+const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+function connect() {
+  const base = SERVER ? (SERVER.startsWith('ws') ? SERVER : 'ws://' + SERVER) : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  ws = new WebSocket(base);
+  ws.onopen = () => { $('status').style.display = 'none'; send({ t: 'hi', name }); clearInterval(hb); hb = setInterval(() => send({ t: 'pg' }), 20000); };
+  ws.onmessage = e => handle(JSON.parse(e.data));
+  ws.onclose = () => { joined = false; $('status').textContent = 'Connection lost. Reconnecting…'; $('status').style.display = 'block'; setTimeout(connect, 1500); };
+}
+
+function handle(m) {
+  switch (m.t) {
+    case 'w':
+      me.id = m.id; me.hue = m.hue; roster = m.roster; MI = m.cfg.mi; ROUND_MAX = m.cfg.roundMax;
+      W = m.cfg.W; H = m.cfg.H; phase = m.ph; joined = true;
+      if (phase === 'over') banner('Round finished<small>The next maze opens in a moment</small>');
+      break;
+    case 'n':
+      loadMaze(m); others.clear(); effects.length = 0; finished = null; phase = 'play'; gold = 0; $('gold').textContent = 0;
+      $('end').style.display = 'none'; banner('');
+      $('rnd').textContent = 'Maze #' + m.r; toast('A new maze opens. Find the exit.');
+      break;
+    case 'p': onPos(m); break;
+    case 'o': onOthers(m.l); break;
+    case 'j': roster[m.id] = [m.n, m.h]; break;
+    case 'l': delete roster[m.id]; others.delete(m.id); break;
+    case 'm': onMeta(m); break;
+    case 'chest': onChest(m); break;
+    case 'thief': onThief(m); break;
+    case 'th': onThiefMove(m.l); break;
+    case 'f':
+      toast(`${m.n} reached the exit  (#${m.k}, ${m.e}s, ${m.sc} pts)`);
+      if (m.id !== me.id) beep(660, 990, .25, 'triangle', .04);
+      break;
+    case 'e': onEnd(m); break;
+  }
+}
+
+function loadMaze(m) {
+  W = m.W; H = m.H;
+  const g = new Uint8Array(W * H);
+  for (let i = 0; i < g.length; i++) g[i] = m.g.charCodeAt(i) - 48;
+  grid = g; goal = m.goal; gx = goal % W; gy = (goal / W) | 0;
+  chests = new Map(); (m.chests || []).forEach(([id, t, v]) => chests.set(id, { t, v, x: t % W, y: (t / W) | 0 }));
+  thieves = new Map(); (m.thieves || []).forEach(([id, t]) => thieves.set(id, { t, x: t % W, y: (t / W) | 0, dx: t % W, dy: (t / W) | 0 }));
+  buildStatic(); fitOffsets();
+}
+
+function onPos(m) {
+  if (m.f) { px = m.x; py = m.y; dispX = px; dispY = py; }
+  else if (m.s === seq && (m.x !== px || m.y !== py)) { px = m.x; py = m.y; }
+  gold = m.money; $('gold').textContent = gold;
+  if (m.fin && !finished) {
+    finished = m.fin;
+    banner(`You found the exit!<small>Place #${m.fin}. Wait for the round to end.</small>`);
+    [523, 659, 784, 1046].forEach((f, i) => beep(f, f * 1.01, .3, 'triangle', .06, i * .09));
+  }
+}
+
+function onOthers(list) {
+  const keep = new Set();
+  for (const [id, x, y] of list) {
+    keep.add(id); const o = others.get(id);
+    if (!o) others.set(id, { x, y, dx: x, dy: y });
+    else { o.x = x; o.y = y; if (Math.abs(o.dx - x) + Math.abs(o.dy - y) > 3) { o.dx = x; o.dy = y; } }
+  }
+  for (const id of others.keys()) if (!keep.has(id)) others.delete(id);
+}
+
+function onChest(m) {
+  chests.delete(m.id);
+  gold += m.v; $('gold').textContent = gold;
+  toast(`+${m.v} gold`, 'good'); goodFlash = 1;
+  beep(880, 1320, .18, 'triangle', .05);
+}
+
+function onThief(m) {
+  toast(`A thief stole ${m.loss} gold!`, 'bad'); flash = 1;
+  beep(300, 90, .4, 'sawtooth', .06);
+}
+
+function onThiefMove(list) {
+  for (const [id, t] of list) {
+    const x = t % W, y = (t / W) | 0, o = thieves.get(id);
+    if (!o) thieves.set(id, { t, x, y, dx: x, dy: y });
+    else { o.t = t; o.x = x; o.y = y; }
+  }
+}
+
+function onMeta(m) {
+  $('on').textContent = m.n + ' runners in the maze';
+  if (phase === 'play') $('tm').textContent = m.gl >= 0 ? `Exit reached. Round ends in ${m.gl}s` : 'Time left ' + fmt(m.tl);
+  const ol = $('lbl'); ol.textContent = '';
+  m.lb.forEach(([n, mo, f]) => {
+    const li = document.createElement('li'); if (f) li.className = 'fin';
+    const a = document.createElement('span'), b = document.createElement('span');
+    a.textContent = n; b.textContent = (f ? '✓ ' : '') + mo + 'g'; li.append(a, b); ol.appendChild(li);
+  });
+  $('me').textContent = `You: ${gold} gold` + (finished ? ' · finished' : '');
+}
+
+function onEnd(m) {
+  phase = 'over'; banner(''); held.length = 0;
+  const fillF = id => { const o = $(id); o.textContent = ''; return o; };
+  const er = fillF('er'); m.res.forEach(r => { const li = document.createElement('li'); li.textContent = `${r[0]}  ${r[1]}s · ${r[2]}g · ${r[3]}pts`; er.appendChild(li); });
+  if (!m.res.length) er.textContent = 'Nobody made it this time.';
+  const es = fillF('es'); m.sc.forEach(r => { const li = document.createElement('li'); li.textContent = `${r[0]}  ${r[1]} pts`; es.appendChild(li); });
+  if (!m.sc.length) es.textContent = 'No scores yet.';
+  endAt = performance.now() + m.nx * 1000; $('end').style.display = 'flex';
+}
+
+// ---------- input
+const KEYS = { ArrowUp: 0, w: 0, W: 0, ArrowRight: 1, d: 1, D: 1, ArrowDown: 2, s: 2, S: 2, ArrowLeft: 3, a: 3, A: 3 };
+function press(d) { const i = held.indexOf(d); if (i >= 0) held.splice(i, 1); held.push(d); }
+function release(d) { const i = held.indexOf(d); if (i >= 0) held.splice(i, 1); }
+addEventListener('keydown', e => { if (e.target.id === 'nm') return; const d = KEYS[e.key]; if (d !== undefined) { e.preventDefault(); if (!e.repeat) press(d); } });
+addEventListener('keyup', e => { const d = KEYS[e.key]; if (d !== undefined) release(d); });
+addEventListener('blur', () => held.length = 0);
+document.querySelectorAll('#pad button').forEach(b => {
+  const d = +b.dataset.d;
+  b.addEventListener('pointerdown', e => { e.preventDefault(); press(d); });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, () => release(d)));
+});
+
+function tryMove(now) {
+  if (phase !== 'play' || finished || !joined || !grid || now - lastMove < MI * 1.04) return;
+  for (let i = held.length - 1; i >= 0; i--) {
+    const d = held[i], nx = px + DX[d], ny = py + DY[d], k = grid[ny * W + nx];
+    if (k === 0) { px = nx; py = ny; lastMove = now; send({ t: 'm', d, s: ++seq }); return; }
+  }
+}
+
+// ---------- rendering
+function draw(now, dt) {
+  const cw = innerWidth, ch = innerHeight, t = now / 1000;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#f6ecd6'; ctx.fillRect(0, 0, cw, ch);
+  if (!grid) return;
+  dispX += (px - dispX) * Math.min(1, dt * 20); dispY += (py - dispY) * Math.min(1, dt * 20);
+  const pul = .5 + .5 * Math.sin(t * 3);
+
+  ctx.drawImage(staticLayer, offX, offY);
+  const S = x => offX + x * T, SY = y => offY + y * T;
+
+  // chests
+  ctx.font = `${Math.max(9, T * .55)}px system-ui`; ctx.textAlign = 'center';
+  for (const c of chests.values()) {
+    const sx = S(c.x) + T / 2, sy = SY(c.y) + T / 2;
+    ctx.save();
+    ctx.translate(sx, sy + Math.sin(t * 3 + c.x) * T * .06);
+    ctx.fillStyle = '#c8862a'; ctx.beginPath(); ctx.roundRect(-T * .32, -T * .22, T * .64, T * .44, T * .08); ctx.fill();
+    ctx.fillStyle = '#e8ad3f'; ctx.fillRect(-T * .32, -T * .22, T * .64, T * .14);
+    ctx.fillStyle = '#fff4d6'; ctx.fillText('$', 0, T * .08);
+    ctx.restore();
+  }
+
+  // thieves
+  for (const th of thieves.values()) {
+    th.dx += (th.x - th.dx) * Math.min(1, dt * 6); th.dy += (th.y - th.dy) * Math.min(1, dt * 6);
+    const sx = S(th.dx) + T / 2, sy = SY(th.dy) + T / 2;
+    ctx.fillStyle = 'rgba(180,30,50,.18)'; ctx.beginPath(); ctx.arc(sx, sy, T * .6, 0, 6.283); ctx.fill();
+    ctx.fillStyle = '#8a1f34'; ctx.beginPath(); ctx.arc(sx, sy, T * .3, 0, 6.283); ctx.fill();
+    ctx.fillStyle = '#f4d9de'; ctx.beginPath(); ctx.arc(sx - T * .1, sy - T * .05, T * .06, 0, 6.283); ctx.arc(sx + T * .1, sy - T * .05, T * .06, 0, 6.283); ctx.fill();
+  }
+
+  // other runners
+  ctx.font = `600 ${Math.max(9, T * .42)}px system-ui`;
+  for (const [id, o] of others) {
+    o.dx += (o.x - o.dx) * Math.min(1, dt * 14); o.dy += (o.y - o.dy) * Math.min(1, dt * 14);
+    const r = roster[id] || ['?', 0], sx = S(o.dx) + T / 2, sy = SY(o.dy) + T / 2;
+    ctx.fillStyle = `hsl(${r[1]},70%,45%)`; ctx.beginPath(); ctx.arc(sx, sy, T * .27, 0, 6.283); ctx.fill();
+    ctx.fillStyle = 'rgba(58,44,26,.85)'; ctx.fillText(r[0], sx, sy - T * .42);
+  }
+
+  // you
+  const sx = S(dispX) + T / 2, sy = SY(dispY) + T / 2;
+  const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, T * 2);
+  g.addColorStop(0, 'rgba(232,173,63,.35)'); g.addColorStop(1, 'rgba(232,173,63,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(sx, sy, T * 2, 0, 6.283); ctx.fill();
+  ctx.fillStyle = `hsl(${me.hue},75%,45%)`; ctx.beginPath(); ctx.arc(sx, sy, T * .32, 0, 6.283); ctx.fill();
+  ctx.fillStyle = '#fff8e8'; ctx.beginPath(); ctx.arc(sx, sy, T * .13, 0, 6.283); ctx.fill();
+  ctx.strokeStyle = `rgba(232,173,63,${.5 + .4 * pul})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(sx, sy, T * .4, 0, 6.283); ctx.stroke();
+
+  if (flash > 0) { ctx.fillStyle = `rgba(209,66,90,${flash * .3})`; ctx.fillRect(0, 0, cw, ch); flash = Math.max(0, flash - dt * 2.2); }
+  if (goodFlash > 0) { ctx.fillStyle = `rgba(232,173,63,${goodFlash * .18})`; ctx.fillRect(0, 0, cw, ch); goodFlash = Math.max(0, goodFlash - dt * 2.5); }
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  tryMove(now); draw(now, dt);
+  if (phase === 'over' && endAt) $('en').textContent = 'Next maze in ' + Math.max(0, Math.ceil((endAt - now) / 1000)) + 's';
+  requestAnimationFrame(frame);
+}
+
+// ---------- start
+$('nm').value = localStorage.getItem('lab_name') || '';
+function start() {
+  name = $('nm').value.trim(); localStorage.setItem('lab_name', name);
+  $('login').style.display = 'none'; beep(220, 330, .2, 'triangle', .04); connect();
+}
+$('go').onclick = start;
+$('nm').addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
+$('nm').focus();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
