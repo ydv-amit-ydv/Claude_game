@@ -43,6 +43,24 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%}
 .card input:focus{border-color:var(--gold)}
 .card button{margin-top:13px;width:100%;padding:12px;font:700 16px system-ui;color:#3a2308;background:linear-gradient(180deg,var(--gold2),var(--gold));border:0;border-radius:8px;cursor:pointer;box-shadow:0 4px 14px rgba(200,134,42,.4)}
 .card button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.card button.ghost{background:transparent;box-shadow:none;color:var(--dim);border:1px solid var(--line);font-weight:600}
+#tabs{display:flex;gap:6px;margin-bottom:14px;background:#efe1bd;border-radius:8px;padding:3px}
+#tabs button{flex:1;padding:9px;border:0;border-radius:6px;background:transparent;font:600 14px system-ui;color:var(--dim);cursor:pointer;margin:0}
+#tabs button.on{background:var(--panel);color:var(--gold);box-shadow:0 2px 8px rgba(80,50,10,.12)}
+.pane{display:none}.pane.on{display:block}
+#delays{display:flex;gap:6px;margin-top:6px}
+#delays button{flex:1;padding:9px 4px;font:600 13px system-ui;background:#fffaf0;color:var(--ink);border:1px solid var(--line);border-radius:7px;cursor:pointer;margin:0}
+#delays button.on{background:var(--gold);color:#3a2308;border-color:var(--gold)}
+#code{width:100%;padding:12px 13px;font:700 22px system-ui;letter-spacing:4px;text-align:center;text-transform:uppercase;color:var(--ink);background:#fffaf0;border:1px solid var(--line);border-radius:8px;outline:0}
+#err{color:var(--bad);font-size:13px;margin-top:8px;display:none;font-weight:600}
+#wait{display:none}
+#wait .codebox{display:flex;align-items:center;gap:8px;background:#fffaf0;border:1px dashed var(--gold);border-radius:8px;padding:10px 14px;margin:14px 0}
+#wait .codebox b{font:700 26px Georgia,serif;letter-spacing:5px;color:var(--gold);flex:1}
+#wait .codebox button{margin:0;width:auto;padding:8px 12px;font-size:13px}
+#wait #cnt{font:700 44px Georgia,serif;color:var(--gold);text-align:center;margin:6px 0}
+#wait #wplayers{list-style:none;margin-top:10px;max-height:140px;overflow:auto}
+#wait #wplayers li{padding:3px 0;color:var(--dim);font-size:13px;border-bottom:1px solid var(--line)}
+#roomcode{color:var(--gold);font-weight:700;letter-spacing:1px}
 #end{display:none}
 #end ol{margin:8px 0 0 20px}
 #end h3{font:700 15px Georgia,serif;color:var(--gold);margin-top:14px}
@@ -64,7 +82,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%}
 </head>
 <body>
 <canvas id="g"></canvas>
-<div id="top" class="hud"><b id="rnd">Labyrinth</b><div id="tm"></div><div id="on"></div><div>Gold: <span id="gold">0</span></div></div>
+<div id="top" class="hud"><b id="rnd">Labyrinth</b><div id="on"></div><div id="tm"></div><div>Gold: <span id="gold">0</span></div><div>Code: <span id="roomcode"></span></div></div>
 <div id="lb" class="hud"><h4>Leaderboard</h4><ol id="lbl"></ol><div class="me" id="me"></div></div>
 <div id="toast"></div>
 <div id="banner"></div>
@@ -76,7 +94,34 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%}
   <h1>Labyrinth</h1>
   <p>See the whole maze, grab gold from chests, dodge the thieves, and race to the glowing exit before the clock runs out.</p>
   <input id="nm" maxlength="16" placeholder="Your name" autocomplete="off">
+  <div id="tabs">
+    <button id="tabCreate" class="on">New tournament</button>
+    <button id="tabJoin">Join by code</button>
+  </div>
+  <div id="paneCreate" class="pane on">
+    <p style="margin:0 0 4px;font-size:12.5px">Starts for everyone at once:</p>
+    <div id="delays">
+      <button data-s="20" class="on">20s</button>
+      <button data-s="60">1m</button>
+      <button data-s="300">5m</button>
+      <button data-s="900">15m</button>
+    </div>
+  </div>
+  <div id="paneJoin" class="pane">
+    <input id="code" maxlength="6" placeholder="ABCXYZ" autocomplete="off">
+  </div>
   <button id="go">Enter the maze</button>
+  <p id="err"></p>
+</div></div>
+
+<div id="wait" class="ov"><div class="card">
+  <h1>Get ready</h1>
+  <p>Everyone in this tournament starts the same maze together at the scheduled time.</p>
+  <div class="codebox"><b id="codeShow"></b><button id="copy" type="button">Copy</button></div>
+  <div id="cnt">--</div>
+  <p style="text-align:center;color:var(--dim)">until the maze opens</p>
+  <h3 style="font:700 13px Georgia,serif;color:var(--gold);margin-top:14px">Runners waiting</h3>
+  <ol id="wplayers"></ol>
 </div></div>
 
 <div id="end" class="ov"><div class="card">
@@ -104,6 +149,7 @@ let px = 0, py = 0, dispX = 0, dispY = 0, seq = 0, lastMove = 0, gold = 0;
 let phase = 'play', finished = null, joined = false, name = '';
 const held = [], effects = [];
 let flash = 0, goodFlash = 0, endAt = 0;
+let mode = 'create', delay = 20, roomCode = '', joinCode = '';
 
 // ---------- lighting-free light palette
 function buildStatic() {
@@ -175,7 +221,7 @@ const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
 function connect() {
   const base = SERVER ? (SERVER.startsWith('ws') ? SERVER : 'ws://' + SERVER) : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
   ws = new WebSocket(base);
-  ws.onopen = () => { $('status').style.display = 'none'; send({ t: 'hi', name }); clearInterval(hb); hb = setInterval(() => send({ t: 'pg' }), 20000); };
+  ws.onopen = () => { $('status').style.display = 'none'; send({ t: 'hi', name, mode, delay, code: joinCode }); clearInterval(hb); hb = setInterval(() => send({ t: 'pg' }), 20000); };
   ws.onmessage = e => handle(JSON.parse(e.data));
   ws.onclose = () => { joined = false; $('status').textContent = 'Connection lost. Reconnecting…'; $('status').style.display = 'block'; setTimeout(connect, 1500); };
 }
@@ -184,10 +230,32 @@ function handle(m) {
   switch (m.t) {
     case 'w':
       me.id = m.id; me.hue = m.hue; roster = m.roster; MI = m.cfg.mi; ROUND_MAX = m.cfg.roundMax;
-      W = m.cfg.W; H = m.cfg.H; phase = m.ph; joined = true;
-      if (phase === 'over') banner('Round finished<small>The next maze opens in a moment</small>');
+      W = m.cfg.W; H = m.cfg.H; phase = m.ph; joined = true; roomCode = m.code;
+      mode = 'join'; joinCode = roomCode;                    // reconnects rejoin the same room
+      $('roomcode').textContent = roomCode;
+      if (phase === 'lobby') {
+        $('login').style.display = 'none'; $('wait').style.display = 'flex';
+        $('codeShow').textContent = roomCode;
+      } else {
+        $('login').style.display = 'none'; $('wait').style.display = 'none';
+        if (phase === 'over') banner('Round finished<small>The next maze opens in a moment</small>');
+      }
+      break;
+    case 'lobby':
+      roomCode = m.code; $('roomcode').textContent = roomCode; $('codeShow').textContent = roomCode;
+      $('cnt').textContent = fmt(m.startIn);
+      const wl = $('wplayers'); wl.textContent = '';
+      m.players.forEach(([id, n]) => { const li = document.createElement('li'); li.textContent = n + (id === me.id ? ' (you)' : ''); wl.appendChild(li); });
+      if (!m.players.length) wl.textContent = '';
+      break;
+    case 'err':
+      $('err').textContent = m.msg; $('err').style.display = 'block';
+      if (ws) ws.onclose = null; if (ws) ws.close(); joined = false;
+      $('wait').style.display = 'none'; $('login').style.display = 'flex';
       break;
     case 'n':
+      $('wait').style.display = 'none';
+      if (m.roster) roster = m.roster;
       loadMaze(m); others.clear(); effects.length = 0; finished = null; phase = 'play'; gold = 0; $('gold').textContent = 0;
       $('end').style.display = 'none'; banner('');
       $('rnd').textContent = 'Maze #' + m.r; toast('A new maze opens. Find the exit.');
@@ -365,14 +433,39 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-// ---------- start
+// ---------- lobby / tabs / start
 $('nm').value = localStorage.getItem('lab_name') || '';
+function setTab(m) {
+  mode = m;
+  $('tabCreate').classList.toggle('on', m === 'create');
+  $('tabJoin').classList.toggle('on', m === 'join');
+  $('paneCreate').classList.toggle('on', m === 'create');
+  $('paneJoin').classList.toggle('on', m === 'join');
+  $('err').style.display = 'none';
+}
+$('tabCreate').onclick = () => setTab('create');
+$('tabJoin').onclick = () => setTab('join');
+document.querySelectorAll('#delays button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#delays button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); delay = +b.dataset.s;
+  });
+});
+$('copy').addEventListener('click', () => {
+  navigator.clipboard?.writeText(roomCode).then(() => { $('copy').textContent = 'Copied!'; setTimeout(() => $('copy').textContent = 'Copy', 1200); }).catch(() => {});
+});
 function start() {
   name = $('nm').value.trim(); localStorage.setItem('lab_name', name);
-  $('login').style.display = 'none'; beep(220, 330, .2, 'triangle', .04); connect();
+  $('err').style.display = 'none';
+  if (mode === 'join') {
+    joinCode = $('code').value.trim().toUpperCase();
+    if (joinCode.length !== 6) { $('err').textContent = 'Enter the 6-character tournament code.'; $('err').style.display = 'block'; return; }
+  }
+  beep(220, 330, .2, 'triangle', .04); connect();
 }
 $('go').onclick = start;
 $('nm').addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
+$('code').addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
 $('nm').focus();
 requestAnimationFrame(frame);
 </script>
