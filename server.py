@@ -171,7 +171,7 @@ def broadcast(frame, skip=None):
 def maze_msg():
     m = S.maze
     return {
-        "t": "maze", "W": W, "H": H,
+        "W": W, "H": H,
         "g": "".join("1" if b else "0" for b in m.grid),
         "goal": m.goal,
         "chests": [[c["id"], c["t"], c["v"]] for c in m.chests],
