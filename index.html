@@ -147,6 +147,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block;image-rende
   <ol id="champList"></ol>
 </div></div>
 
+<script src="render.js"></script>
 <script>
 'use strict';
 const SERVER = new URLSearchParams(location.search).get('server') || '';
@@ -206,212 +207,78 @@ function beep(f0, f1, d, type = 'sine', v = .06, delay = 0) {
 }
 
 // ================================================================ look & feel
-// Each level is its own place: forest, ruins, then the temple interior.
-const LOOKS = [
-  { // 0 - The Forest
-    sky: [[0x7d, 0xc4, 0xf2], [0xc9, 0xe8, 0xa6]], indoor: false,
-    fog: [0x9a, 0xc4, 0x88], fogFrom: 4.5, fogTo: 17,
-    floor: { 0: [0x74, 0xa0, 0x52], 3: [0xa8, 0x85, 0x4e], 4: [0x9c, 0x7a, 0x46], 2: [0x35, 0x75, 0xa8] },
-    lamp: 0
-  },
-  { // 1 - The Ruins
-    sky: [[0xf0, 0xb3, 0x76], [0xf6, 0xdc, 0xb0]], indoor: false,
-    fog: [0xd2, 0xae, 0x86], fogFrom: 4, fogTo: 15,
-    floor: { 0: [0xa8, 0x98, 0x78], 3: [0x9a, 0x86, 0x60], 4: [0x8e, 0x7a, 0x56], 2: [0x40, 0x7e, 0x9a] },
-    lamp: .25
-  },
-  { // 2 - The Temple
-    sky: [[0x24, 0x1c, 0x14], [0x3a, 0x2c, 0x1e]], indoor: true,
-    fog: [0x23, 0x1a, 0x12], fogFrom: 3.5, fogTo: 15,
-    floor: { 0: [0x6a, 0x58, 0x3e], 3: [0x6a, 0x58, 0x3e], 4: [0x6a, 0x58, 0x3e], 2: [0x2a, 0x44, 0x52] },
-    lamp: .85
+// All artwork is generated at level load by render.js - no files to fetch.
+const LOOKS = GFX.LOOKS;
+const TEX = GFX.TEX, TMASK = GFX.TMASK;
+let MAT = null, SKY = null, sprPerson = null, sprChest = null, sprIdol = null,
+    sprBoat = null, sprPlants = null, aoMap = null, tileOff = null;
+
+function buildArt(lv) {
+  MAT = GFX.makeMaterials(lv);
+  sprPerson = [0, 1, 2, 3].map(f => GFX.makePerson(lv, f));
+  sprChest = GFX.makeChest();
+  sprIdol = GFX.makeIdol();
+  sprBoat = GFX.makeBoat();
+  sprPlants = GFX.makePlants(lv);
+  buildSkyPano();
+}
+
+function buildSkyPano() {
+  if (!RH) return;
+  SKY = GFX.buildSky(level, 512, Math.max(8, RH >> 1));
+}
+
+/** which sides of each walkable tile touch something solid, plus a per-tile
+ *  texture offset so repeated ground and walls never show an obvious grid */
+function buildAO() {
+  aoMap = new Uint8Array(W * H);
+  tileOff = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    const x = i % W, y = (i / W) | 0;
+    tileOff[i] = ((GFX.h2(x, y, 5) * 16) | 0) | (((GFX.h2(x, y, 6) * 16) | 0) << 4);
   }
-];
-
-const TEX = 64;
-let texWall = null, texProp = null, texShrine = null, skyRow = null;
-let texGround = null, texWater = null, texPlank = null;
-
-// ground underfoot gets real texture too - grass blades, cracked flags, planks, ripples
-function makeGroundTextures(lv) {
-  const L = LOOKS[lv];
-  const gnd = new Uint32Array(TEX * TEX), wat = new Uint32Array(TEX * TEX), pl = new Uint32Array(TEX * TEX);
-  const base = L.floor[0], wbase = L.floor[2];
-  for (let y = 0; y < TEX; y++) {
-    for (let x = 0; x < TEX; x++) {
-      const i = y * TEX + x;
-      const n = hash(x * 5 + lv * 13, y * 7 - lv * 3);
-      const n2 = hash(x * 11 + 3, y * 2 + 19);
-      if (lv === 0) {
-        // turf: fine blades, occasional daisy, worn earth patches
-        let v = (n - .5) * 26 + (n2 > .8 ? 14 : 0);
-        let r = base[0] + v * .7, g = base[1] + v, b = base[2] + v * .5;
-        if (n2 > .988) { r = 236; g = 232; b = 190; }          // tiny flower
-        else if (n > .93) { r += 18; g += 26; b += 8; }        // bright blade
-        gnd[i] = rgb(clamp(r, 0, 255) | 0, clamp(g, 0, 255) | 0, clamp(b, 0, 255) | 0);
-      } else {
-        // flagstones: big slabs, mortar joints, weather stains
-        const sx = (x / 21) | 0, sy = (y / 21) | 0;
-        const joint = (x % 21 < 2) || (y % 21 < 2);
-        const stain = hash(sx + lv * 7, sy - lv) * 22 - 11;
-        let v = (n - .5) * 14 + stain;
-        let r = base[0] + v, g = base[1] + v, b = base[2] + v;
-        if (joint) { r *= .82; g *= .82; b *= .82; }
-        if (n2 > .975) { r *= .9; g *= .93; b *= .86; }        // crack
-        gnd[i] = rgb(clamp(r, 0, 255) | 0, clamp(g, 0, 255) | 0, clamp(b, 0, 255) | 0);
-      }
-      // water: layered ripples with sun glints
-      const rip = Math.sin(x * .38) * 9 + Math.sin(y * .52 + x * .2) * 11 + (n - .5) * 8;
-      wat[i] = rgb(clamp(wbase[0] + rip * .5, 0, 255) | 0,
-                   clamp(wbase[1] + rip, 0, 255) | 0,
-                   clamp(wbase[2] + rip * 1.4, 0, 255) | 0);
-      // decking: planks across, grain along, dark gaps
-      const gap = (y % 13 < 1.6);
-      const grain = Math.sin(x * 1.7 + ((y / 13) | 0) * 2.1) * 9 + (n - .5) * 12;
-      let pr = 150 + grain, pg = 116 + grain, pb = 74 + grain;
-      if (gap) { pr *= .62; pg *= .6; pb *= .58; }
-      pl[i] = rgb(clamp(pr, 0, 255) | 0, clamp(pg, 0, 255) | 0, clamp(pb, 0, 255) | 0);
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const i = y * W + x;
+      if (opaque(grid[i])) continue;
+      let m = 0;
+      if (opaque(grid[i - W])) m |= 1;
+      if (opaque(grid[i + 1])) m |= 2;
+      if (opaque(grid[i + W])) m |= 4;
+      if (opaque(grid[i - 1])) m |= 8;
+      aoMap[i] = m;
     }
   }
-  texGround = gnd; texWater = wat; texPlank = pl;
 }
 
-function makeTextures(lv) {
-  const w = new Uint32Array(TEX * TEX), p = new Uint32Array(TEX * TEX), s = new Uint32Array(TEX * TEX);
-  for (let y = 0; y < TEX; y++) {
-    for (let x = 0; x < TEX; x++) {
-      const i = y * TEX + x, n = hash(x * 3 + lv, y * 5 - lv), n2 = hash(x + 91, y + 17);
-      if (lv === 0) {
-        // hedge: dense leaves, a few blossoms
-        let r = 42 + n * 40, g = 108 + n * 62, b = 46 + n2 * 34;
-        if (n > .82) { r += 34; g += 44; b += 22; }
-        if (n2 > .972) { r = 236; g = 128 + n * 60; b = 168; }         // pink blossom
-        else if (n2 > .958) { r = 244; g = 206; b = 96; }               // gold blossom
-        w[i] = rgb(r | 0, clamp(g, 0, 255) | 0, b | 0);
-        // tree: bark below, canopy above
-        if (y > TEX * 0.42) {
-          const bk = 74 + Math.sin(x * 1.1) * 12 + n * 18;
-          p[i] = rgb(bk | 0, (bk * .68) | 0, (bk * .44) | 0);
-        } else {
-          p[i] = rgb((36 + n * 34) | 0, (98 + n * 70) | 0, (44 + n2 * 30) | 0);
-        }
-        // shrine: mossy stone with a niche
-        const niche = x > 22 && x < 42 && y > 20 && y < 52;
-        s[i] = niche ? rgb((28 + n * 26) | 0, (24 + n * 22) | 0, (18 + n * 16) | 0)
-                     : rgb((122 + n * 40) | 0, (126 + n * 40) | 0, (104 + n * 32) | 0);
-        if (niche && y > 30 && x > 27 && x < 37) s[i] = rgb(226, 190 + (n * 40) | 0, 96);
-      } else if (lv === 1) {
-        // weathered blocks with mortar, vines trailing down, small flowers
-        const row = (y / 16) | 0, off = (row % 2) * 8;
-        const mortar = (y % 16 < 2) || ((x + off) % 32 < 2);
-        let r = mortar ? 128 : 178 + n * 40, g = mortar ? 118 : 166 + n * 36, b = mortar ? 98 : 140 + n * 30;
-        const vine = Math.abs(((x * 7 + 13) % TEX) - y * .55) < 3 + n * 2;
-        if (vine && y > 6) { r = 58 + n * 30; g = 118 + n * 48; b = 52 + n * 24; }
-        if (vine && n2 > .93) { r = 238; g = 136; b = 176; }
-        w[i] = rgb(r | 0, g | 0, b | 0);
-        // broken column: fluted, top third crumbled away
-        const flut = Math.abs((x % 16) - 8) / 8;
-        const broken = y < TEX * .3 && n > .35 + (TEX * .3 - y) / (TEX * .3);
-        p[i] = broken ? 0 : rgb((186 - flut * 46 + n * 20) | 0, (176 - flut * 44 + n * 18) | 0, (152 - flut * 38 + n * 16) | 0);
-        if (p[i] === 0) p[i] = rgb((150 + n * 30) | 0, (170 + n * 40) | 0, (150 + n * 30) | 0);
-        // arch shrine
-        const arch = Math.abs(x - 32) > 10 || y > 30;
-        s[i] = arch ? rgb((168 + n * 36) | 0, (156 + n * 32) | 0, (130 + n * 26) | 0)
-                    : rgb((30 + n * 22) | 0, (26 + n * 18) | 0, (22 + n * 14) | 0);
-      } else {
-        // temple: carved blocks, vertical grooves, gold inlay, torch soot
-        const row = (y / 21) | 0, off = (row % 2) * 10;
-        const seam = (y % 21 < 2) || ((x + off) % 26 < 2);
-        const groove = Math.abs((x % 13) - 6) < 1.4;
-        let r = seam ? 62 : 104 + n * 26, g = seam ? 52 : 88 + n * 22, b = seam ? 38 : 64 + n * 16;
-        if (groove) { r *= .78; g *= .78; b *= .78; }
-        if (y > 26 && y < 34 && (x % 26 > 10 && x % 26 < 18)) { r = 198; g = 158; b = 64; }  // inlay
-        w[i] = rgb(r | 0, g | 0, b | 0);
-        const flut = Math.abs((x % 16) - 8) / 8;
-        let pr = 128 - flut * 40 + n * 18;
-        if (y % 30 < 4) { pr = 180; }                                    // gold band
-        p[i] = rgb(pr | 0, (pr * .82) | 0, (pr * .56) | 0);
-        const idol = x > 24 && x < 40 && y > 16 && y < 56;
-        s[i] = idol ? rgb(210, 168 + (n * 40) | 0, 72) : rgb((84 + n * 24) | 0, (70 + n * 20) | 0, (52 + n * 16) | 0);
-      }
-    }
-  }
-  texWall = w; texProp = p; texShrine = s;
-}
+// ================================================================ buffers
+let RW = 0, RH = 0, img = null, buf32 = null, zbuf = null, rbuf = null, rctx = null;
+let budget = 0, frameAvg = 16, lastResize = 0;
 
-// ---------- procedural sprites (no image files, nothing to load)
-function makeSprite(w, h, paint) {
-  const d = new Uint32Array(w * h);
-  paint({
-    px: (x, y, c) => { if (x >= 0 && x < w && y >= 0 && y < h) d[(y | 0) * w + (x | 0)] = c; },
-    disc: (cx, cy, r, c) => {
-      for (let y = Math.max(0, cy - r | 0); y <= Math.min(h - 1, cy + r | 0); y++)
-        for (let x = Math.max(0, cx - r | 0); x <= Math.min(w - 1, cx + r | 0); x++)
-          if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) d[y * w + x] = c;
-    },
-    rect: (x0, y0, x1, y1, c) => {
-      for (let y = Math.max(0, y0 | 0); y <= Math.min(h - 1, y1 | 0); y++)
-        for (let x = Math.max(0, x0 | 0); x <= Math.min(w - 1, x1 | 0); x++) d[y * w + x] = c;
-    },
-    taper: (cx, yTop, yBot, wTop, wBot, c) => {
-      for (let y = Math.max(0, yTop | 0); y <= Math.min(h - 1, yBot | 0); y++) {
-        const f = (y - yTop) / Math.max(1, yBot - yTop), ww = wTop + (wBot - wTop) * f;
-        for (let x = Math.max(0, cx - ww | 0); x <= Math.min(w - 1, cx + ww | 0); x++) d[y * w + x] = c;
-      }
-    }
-  });
-  return { w, h, d };
-}
-
-let sprPerson, sprChest, sprIdol, sprBoat;
-function makeSprites(lv) {
-  const cloak = lv === 2 ? rgb(96, 84, 118) : lv === 1 ? rgb(122, 110, 96) : rgb(112, 124, 128);
-  const skin = rgb(214, 176, 140), hair = rgb(58, 44, 36);
-  sprPerson = makeSprite(26, 44, g => {
-    g.disc(13, 40, 7, rgb(0, 0, 0));                   // shadow handled by alpha-less blend
-    g.taper(13, 14, 41, 5, 9, cloak);                  // robe
-    g.rect(6, 22, 8, 32, cloak); g.rect(18, 22, 20, 32, cloak);   // arms
-    g.disc(13, 10, 6, skin);                           // head
-    g.rect(7, 4, 19, 8, hair);                         // hair
-  });
-  sprChest = makeSprite(26, 22, g => {
-    g.rect(2, 9, 23, 20, rgb(150, 104, 40));
-    for (let x = 2; x <= 23; x++) {
-      const y = 9 - Math.round(Math.sqrt(Math.max(0, 1 - ((x - 12.5) / 11) ** 2)) * 7);
-      g.rect(x, y, x, 9, rgb(214, 160, 58));
-    }
-    g.rect(2, 8, 23, 10, rgb(110, 74, 24));
-    g.rect(11, 12, 14, 17, rgb(248, 226, 150));
-  });
-  sprIdol = makeSprite(30, 54, g => {
-    const gold1 = rgb(236, 192, 84), gold2 = rgb(188, 142, 48);
-    g.rect(4, 46, 25, 53, gold2);
-    g.taper(15, 18, 46, 5, 11, gold1);
-    g.disc(15, 13, 8, gold1);
-    g.disc(15, 13, 5, rgb(252, 232, 160));
-    g.rect(2, 22, 5, 26, gold2); g.rect(24, 22, 27, 26, gold2);
-  });
-  sprBoat = makeSprite(34, 16, g => {
-    g.taper(17, 4, 13, 15, 9, rgb(120, 82, 46));
-    g.rect(2, 10, 31, 13, rgb(92, 62, 34));
-    g.rect(16, 0, 18, 9, rgb(150, 112, 70));
-  });
-}
-
-// ================================================================ render buffers
-let RW = 0, RH = 0, img = null, buf32 = null, zbuf = null, rbuf = null;
 function makeBuffers() {
-  const budget = (matchMedia('(pointer:coarse)').matches ? 90000 : 150000);
   const aspect = ch / cw;
-  RW = Math.max(120, Math.round(Math.sqrt(budget / aspect)));
-  RH = Math.max(90, Math.round(RW * aspect));
+  RW = Math.max(140, Math.round(Math.sqrt(budget / aspect)));
+  RH = Math.max(100, Math.round(RW * aspect));
   rbuf = document.createElement('canvas');
   rbuf.width = RW; rbuf.height = RH;
-  const c = rbuf.getContext('2d');
-  img = c.createImageData(RW, RH);
+  rctx = rbuf.getContext('2d');
+  img = rctx.createImageData(RW, RH);
   buf32 = new Uint32Array(img.data.buffer);
   zbuf = new Float32Array(RW);
-  skyRow = null;
+  buildSkyPano();
+}
+
+/** keep the frame rate steady by trading resolution for speed */
+function autoQuality(now, dt) {
+  frameAvg = frameAvg * 0.92 + dt * 1000 * 0.08;
+  if (now - lastResize < 2500) return;
+  const lo = 45000, hi = matchMedia('(pointer:coarse)').matches ? 190000 : 420000;
+  let next = budget;
+  if (frameAvg > 30 && budget > lo) next = Math.max(lo, budget * 0.72);
+  else if (frameAvg < 15 && budget < hi) next = Math.min(hi, budget * 1.28);
+  if (Math.abs(next - budget) / budget > 0.08) {
+    budget = next; lastResize = now; makeBuffers();
+  }
 }
 
 function resize() {
@@ -420,82 +287,135 @@ function resize() {
   cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
   const m = Math.round(Math.min(148, Math.max(90, Math.min(cw, ch) * 0.25)));
   mc.width = m * dpr; mc.height = m * dpr; mc.style.width = m + 'px'; mc.style.height = m + 'px';
+  if (!budget) budget = matchMedia('(pointer:coarse)').matches ? 105000 : 210000;
   makeBuffers();
 }
 addEventListener('resize', resize); resize();
 
-function buildSky() {
-  const L = LOOKS[level], horizon = RH >> 1;
-  skyRow = new Uint32Array(RH);
-  for (let y = 0; y < RH; y++) {
-    const f = clamp(y / horizon, 0, 1);
-    const a = L.sky[0], b = L.sky[1];
-    skyRow[y] = rgb(a[0] + (b[0] - a[0]) * f | 0, a[1] + (b[1] - a[1]) * f | 0, a[2] + (b[2] - a[2]) * f | 0);
-  }
-}
-
 // ================================================================ first person
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+
 function render3D(now) {
   const L = LOOKS[level], horizon = RH >> 1;
-  if (!skyRow) buildSky();
   const fog = L.fog, fogR = fog[0], fogG = fog[1], fogB = fog[2];
   const dirX = Math.cos(yaw), dirY = Math.sin(yaw);
   const fovS = 0.72;
   const planeX = -dirY * fovS, planeY = dirX * fovS;
   const t = now / 1000;
+  const g = grid, ao = aoMap;
+  const texGround = MAT.ground, texPlank = MAT.plank, wb = MAT.waterBase;
+  const skyD = SKY.d, skyW = SKY.w, skyH = SKY.h;
 
-  // --- sky / ceiling
-  for (let y = 0; y < horizon; y++) {
-    const c = skyRow[y], row = y * RW;
-    if (!L.indoor) {
-      for (let x = 0; x < RW; x++) {
-        // soft drifting clouds
-        const n = hash(((x * .18 + t * 2) | 0), ((y * .5) | 0));
-        buf32[row + x] = n > .86 ? rgb(
-          clamp((c & 255) + 26, 0, 255), clamp(((c >> 8) & 255) + 22, 0, 255), clamp(((c >> 16) & 255) + 18, 0, 255)
-        ) : c;
+  // ---------------- sky, or a cast stone ceiling indoors
+  if (!L.indoor) {
+    const fov = 2 * Math.atan(fovS);
+    for (let x = 0; x < RW; x++) {
+      const ang = yaw + (x / RW - 0.5) * fov;
+      let u = (ang / (Math.PI * 2)) % 1; if (u < 0) u += 1;
+      const su = (u * skyW) | 0;
+      for (let y = 0; y < horizon; y++) {
+        const sy = (y * skyH / horizon) | 0;
+        buf32[y * RW + x] = skyD[sy * skyW + su];
       }
-    } else {
-      buf32.fill(c, row, row + RW);
+    }
+  } else {
+    const texCeil = MAT.ceil || MAT.ground, posZ = 0.5 * RH;
+    const rayX0 = dirX - planeX, rayY0 = dirY - planeY;
+    const rayX1 = dirX + planeX, rayY1 = dirY + planeY;
+    for (let y = 0; y < horizon; y += 2) {
+      const p = horizon - y + 1;
+      const rowDist = (posZ / p) * 1.15;
+      const stepX = rowDist * (rayX1 - rayX0) / RW, stepY = rowDist * (rayY1 - rayY0) / RW;
+      let fx = camX + rowDist * rayX0, fy = camY + rowDist * rayY0;
+      const fogF = clamp((rowDist - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
+      const lamp = clamp(1 - rowDist / 8, 0, 1) * L.lamp;
+      const row = y * RW;
+      for (let x = 0; x < RW; x++, fx += stepX, fy += stepY) {
+        const c = texCeil[(((fy - Math.floor(fy)) * TEX) | 0) * TEX + (((fx - Math.floor(fx)) * TEX) | 0)];
+        let r = (c & 255) * 0.72, gg = ((c >> 8) & 255) * 0.72, b = ((c >> 16) & 255) * 0.72;
+        if (lamp) { r += lamp * 96; gg += lamp * 66; b += lamp * 30; }
+        r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
+        const col = rgb(clamp(r, 0, 255) | 0, clamp(gg, 0, 255) | 0, clamp(b, 0, 255) | 0);
+        buf32[row + x] = col;
+        if (y + 1 < horizon) buf32[row + RW + x] = col;
+      }
     }
   }
 
-  // --- floor casting (every other row, then doubled - keeps phones smooth)
+  // ---------------- ground, with contact shade and living water
   const posZ = 0.5 * RH;
   const rayX0 = dirX - planeX, rayY0 = dirY - planeY;
   const rayX1 = dirX + planeX, rayY1 = dirY + planeY;
+  const skyHoriz = skyD[(skyH - 1) * skyW];
+  const skyR = skyHoriz & 255, skyG = (skyHoriz >> 8) & 255, skyB = (skyHoriz >> 16) & 255;
   for (let y = horizon; y < RH; y += 2) {
     const p = y - horizon + 1;
     const rowDist = posZ / p;
     const stepX = rowDist * (rayX1 - rayX0) / RW, stepY = rowDist * (rayY1 - rayY0) / RW;
     let fx = camX + rowDist * rayX0, fy = camY + rowDist * rayY0;
-    let fogF = clamp((rowDist - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
-    const lamp = L.lamp ? clamp(1 - rowDist / 7, 0, 1) * L.lamp : 0;
+    const fogF = clamp((rowDist - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
+    const lamp = L.lamp ? clamp(1 - rowDist / 8, 0, 1) * L.lamp : 0;
     const row = y * RW;
-    const drift = (t * 7) | 0;                                   // water creeps along
+    const near = rowDist < 9;
     for (let x = 0; x < RW; x++, fx += stepX, fy += stepY) {
       const tx = fx | 0, ty = fy | 0;
-      let r, g, b;
-      if (tx < 0 || ty < 0 || tx >= W || ty >= H) { r = fogR; g = fogG; b = fogB; }
+      let r, gg, b;
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) { r = fogR; gg = fogG; b = fogB; }
       else {
-        const k = grid[ty * W + tx];
-        const u = ((fx - tx) * TEX) | 0;
-        let v = ((fy - ty) * TEX) | 0;
-        let c;
-        if (k === WATER) c = texWater[(((v + drift) & (TEX - 1)) * TEX) + u];
-        else if (k === BRIDGE || k === DOCK) c = texPlank[v * TEX + u];
-        else c = texGround[v * TEX + u];
-        r = c & 255; g = (c >> 8) & 255; b = (c >> 16) & 255;
-        if (lamp) { r += lamp * 90; g += lamp * 74; b += lamp * 44; }
+        const fu = fx - tx, fv = fy - ty;
+        const k = g[ty * W + tx];
+        if (k === WATER) {
+          // two ripple trains, a sun glint, sky reflection, foam at the bank
+          const w1 = Math.sin(fx * 3.1 + t * 1.6) + Math.sin(fy * 2.3 - t * 1.1);
+          const w2 = Math.sin((fx + fy) * 1.7 - t * 2.3);
+          const wob = w1 * 0.5 + w2 * 0.5;
+          r = wb[0] + wob * 13; gg = wb[1] + wob * 17; b = wb[2] + wob * 21;
+          let s = wob * 0.5 + 0.5; s *= s; s *= s; s *= s;
+          r += s * 165; gg += s * 165; b += s * 140;
+          const refl = clamp(0.08 + rowDist * 0.022, 0, 0.34);
+          r += (skyR - r) * refl; gg += (skyG - gg) * refl; b += (skyB - b) * refl;
+          const m = ao[ty * W + tx];
+          if (near) {
+            let edge = 0;
+            const wat = (xx, yy) => (xx >= 0 && yy >= 0 && xx < W && yy < H && g[yy * W + xx] === WATER);
+            if (!wat(tx, ty - 1)) edge = Math.max(edge, 1 - fv);
+            if (!wat(tx + 1, ty)) edge = Math.max(edge, fu);
+            if (!wat(tx, ty + 1)) edge = Math.max(edge, fv);
+            if (!wat(tx - 1, ty)) edge = Math.max(edge, 1 - fu);
+            const foam = Math.pow(clamp(edge, 0, 1), 6) * (0.55 + 0.45 * Math.sin(t * 3 + fx + fy));
+            r += foam * 120; gg += foam * 130; b += foam * 120;
+          }
+        } else {
+          const tex = (k === BRIDGE || k === DOCK) ? texPlank : texGround;
+          const off = tileOff[ty * W + tx];
+          const u = (((fu * TEX) | 0) + (off & 15) * 8) & TMASK;
+          const v = (((fv * TEX) | 0) + (off >> 4) * 8) & TMASK;
+          const c = tex[v * TEX + u];
+          r = c & 255; gg = (c >> 8) & 255; b = (c >> 16) & 255;
+          if (near) {
+            const m = ao[ty * W + tx];
+            if (m) {
+              let occ = 0;
+              if (m & 1) occ = Math.max(occ, 1 - fv);
+              if (m & 2) occ = Math.max(occ, fu);
+              if (m & 4) occ = Math.max(occ, fv);
+              if (m & 8) occ = Math.max(occ, 1 - fu);
+              const sh = 1 - 0.5 * occ * occ * occ;
+              r *= sh; gg *= sh; b *= sh;
+            }
+          }
+        }
+        if (lamp) { r += lamp * 128; gg += lamp * 88; b += lamp * 38; }
       }
-      r = r + (fogR - r) * fogF; g = g + (fogG - g) * fogF; b = b + (fogB - b) * fogF;
-      const c2 = rgb(clamp(r, 0, 255) | 0, clamp(g, 0, 255) | 0, clamp(b, 0, 255) | 0);
-      buf32[row + x] = c2;
-      if (y + 1 < RH) buf32[row + RW + x] = c2;
+      r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
+      const dz = (BAYER[(y & 3) * 4 + (x & 3)] - 7.5) * 0.22;
+      const col = rgb(clamp(r + dz, 0, 255) | 0, clamp(gg + dz, 0, 255) | 0, clamp(b + dz, 0, 255) | 0);
+      buf32[row + x] = col;
+      if (y + 1 < RH) buf32[row + RW + x] = col;
     }
   }
 
-  // --- walls
+  // ---------------- walls
   for (let x = 0; x < RW; x++) {
     const camXn = 2 * x / RW - 1;
     const rdX = dirX + planeX * camXn, rdY = dirY + planeY * camXn;
@@ -507,20 +427,20 @@ function render3D(now) {
     if (rdY < 0) { stepY = -1; sideDistY = (camY - mapY) * dDistY; }
     else { stepY = 1; sideDistY = (mapY + 1 - camY) * dDistY; }
 
-    let side = 0, hitKind = 0, dist = 0, guard = 0;
-    while (guard++ < 160) {
+    let side = 0, hitKind = 0, guard = 0;
+    while (guard++ < 200) {
       if (sideDistX < sideDistY) { sideDistX += dDistX; mapX += stepX; side = 0; }
       else { sideDistY += dDistY; mapY += stepY; side = 1; }
       if (mapX < 0 || mapY < 0 || mapX >= W || mapY >= H) { hitKind = WALL; break; }
-      const k = grid[mapY * W + mapX];
+      const k = g[mapY * W + mapX];
       if (opaque(k)) { hitKind = k; break; }
     }
-    dist = side === 0 ? (sideDistX - dDistX) : (sideDistY - dDistY);
+    let dist = side === 0 ? (sideDistX - dDistX) : (sideDistY - dDistY);
     if (dist < 0.02) dist = 0.02;
     zbuf[x] = dist;
 
     const lineH = (RH / dist) | 0;
-    let y0 = horizon - (lineH >> 1), y1 = horizon + (lineH >> 1);
+    const y0 = horizon - (lineH >> 1), y1 = horizon + (lineH >> 1);
     const drawStart = Math.max(0, y0), drawEnd = Math.min(RH - 1, y1);
     if (drawEnd < drawStart) continue;
 
@@ -528,64 +448,112 @@ function render3D(now) {
     wallX -= Math.floor(wallX);
     let texX = (wallX * TEX) | 0;
     if ((side === 0 && rdX > 0) || (side === 1 && rdY < 0)) texX = TEX - texX - 1;
+    const woff = (mapX >= 0 && mapY >= 0 && mapX < W && mapY < H) ? tileOff[mapY * W + mapX] : 0;
+    texX = (texX + (woff & 15) * 8) & TMASK;
+    const wyoff = (woff >> 4) * 8;
 
-    const tex = hitKind === PROP ? texProp : hitKind === SHRINE ? texShrine : texWall;
-    const shade = side === 1 ? 0.76 : 1;
+    const tex = hitKind === PROP ? MAT.prop : hitKind === SHRINE ? MAT.shrine : MAT.wall;
+    const shade = (side === 1 ? 0.84 : 1) * L.ambient;
     const fogF = clamp((dist - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
-    const lamp = L.lamp ? clamp(1 - dist / 7, 0, 1) * L.lamp : 0;
+    const lamp = L.lamp ? clamp(1 - dist / 8, 0, 1) * L.lamp : 0;
     const step = TEX / lineH;
     let texPos = (drawStart - horizon + (lineH >> 1)) * step;
+    const colBase = texX * 1;
 
     for (let y = drawStart; y <= drawEnd; y++) {
-      const texY = (texPos | 0) & (TEX - 1);
+      const texY = ((texPos | 0) + wyoff) & TMASK;
       texPos += step;
-      const c = tex[texY * TEX + texX];
-      let r = (c & 255) * shade, g = ((c >> 8) & 255) * shade, b = ((c >> 16) & 255) * shade;
-      if (lamp) { r += lamp * 96; g += lamp * 78; b += lamp * 46; }
-      r = r + (fogR - r) * fogF; g = g + (fogG - g) * fogF; b = b + (fogB - b) * fogF;
-      buf32[y * RW + x] = rgb(clamp(r, 0, 255) | 0, clamp(g, 0, 255) | 0, clamp(b, 0, 255) | 0);
+      const c = tex[texY * TEX + colBase];
+      let r = (c & 255) * shade, gg = ((c >> 8) & 255) * shade, b = ((c >> 16) & 255) * shade;
+      if (lamp) { r += lamp * 136; gg += lamp * 94; b += lamp * 42; }
+      r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
+      const dz = (BAYER[(y & 3) * 4 + (x & 3)] - 7.5) * 0.22;
+      buf32[y * RW + x] = rgb(clamp(r + dz, 0, 255) | 0, clamp(gg + dz, 0, 255) | 0, clamp(b + dz, 0, 255) | 0);
     }
   }
 
-  // --- sprites (people, chests, boats, the idol), painter's algorithm
+  // ---------------- things standing in the world
   const list = [];
-  for (const o of others.values()) list.push({ s: sprPerson, x: o.dx + .5, y: o.dy + .5, sc: 1, lift: 0 });
-  for (const c of chests.values()) list.push({ s: sprChest, x: c.x + .5, y: c.y + .5, sc: .62, lift: .34 });
-  for (const b of boats) list.push({ s: sprBoat, x: b.x + .5, y: b.y + .5, sc: .8, lift: .38 });
-  list.push({ s: sprIdol, x: gx + .5, y: gy + .5, sc: 1.25, lift: -.04 });
+  const walkPhase = (o) => sprPerson[((now / 140 + o.x * 3 + o.y * 5) | 0) & 3];
+  for (const o of others.values()) {
+    const moving = Math.abs(o.x - o.dx) + Math.abs(o.y - o.dy) > 0.02;
+    list.push({ s: moving ? walkPhase(o) : sprPerson[0], x: o.dx + .5, y: o.dy + .5, sc: 0.86 });
+  }
+  for (const c of chests.values()) list.push({ s: sprChest, x: c.x + .5, y: c.y + .5, sc: .42 });
+  for (const b of boats) list.push({ s: sprBoat, x: b.x + .5, y: b.y + .5, sc: .5 });
+  list.push({ s: sprIdol, x: gx + .5, y: gy + .5, sc: 1.45 });
+
+  // plants, placed by tile hash so they never need sending over the wire
+  const reeds = sprPlants[sprPlants.length - 2], lily = sprPlants[sprPlants.length - 1];
+  const nKinds = sprPlants.length - 2;
+  const cx0 = Math.max(1, (camX - 13) | 0), cx1 = Math.min(W - 2, (camX + 13) | 0);
+  const cy0 = Math.max(1, (camY - 13) | 0), cy1 = Math.min(H - 2, (camY + 13) | 0);
+  for (let ty = cy0; ty <= cy1; ty++) {
+    for (let tx = cx0; tx <= cx1; tx++) {
+      const k = g[ty * W + tx];
+      const hh = GFX.h2(tx, ty, 999);
+      if (k === WATER) {
+        if (hh > 0.88) list.push({ s: lily, x: tx + .2 + hh * .6, y: ty + .3 + hh * .4, sc: .2 });
+        continue;
+      }
+      if (k !== GROUND || hh > 0.34) continue;
+      const m = aoMap[ty * W + tx];
+      const nearWater = (g[ty * W + tx - 1] === WATER) || (g[ty * W + tx + 1] === WATER) ||
+                        (g[(ty - 1) * W + tx] === WATER) || (g[(ty + 1) * W + tx] === WATER);
+      if (!m && !nearWater) continue;                       // only dress edges, not open ground
+      const sp = nearWater ? reeds : sprPlants[(hh * 997 | 0) % nKinds];
+      const jx = GFX.h2(tx, ty, 41), jy = GFX.h2(tx, ty, 67);
+      list.push({ s: sp, x: tx + .2 + jx * .6, y: ty + .2 + jy * .6,
+                  sc: nearWater ? .34 : .22 + jx * .12,
+                  sway: Math.sin(t * 1.6 + tx * .7 + ty * .4) * 0.012 });
+    }
+  }
 
   for (const sp of list) { sp.rx = sp.x - camX; sp.ry = sp.y - camY; sp.d2 = sp.rx * sp.rx + sp.ry * sp.ry; }
   list.sort((a, b) => b.d2 - a.d2);
 
   const invDet = 1 / (planeX * dirY - dirX * planeY);
   for (const sp of list) {
-    if (sp.d2 > 400) continue;
-    const trX = invDet * (dirY * sp.rx - dirX * sp.ry);
-    const trY = invDet * (-planeY * sp.rx + planeX * sp.ry);
-    if (trY < 0.25) continue;
+    if (sp.d2 > 340) continue;
+    const rx = sp.rx + (sp.sway || 0), ry = sp.ry;
+    const trX = invDet * (dirY * rx - dirX * ry);
+    const trY = invDet * (-planeY * rx + planeX * ry);
+    if (trY < 0.3) continue;
     const scrX = ((RW / 2) * (1 + trX / trY)) | 0;
     const sh = Math.abs((RH / trY) * sp.sc) | 0, sw = (sh * sp.s.w / sp.s.h) | 0;
-    const lift = (sp.lift * RH / trY) | 0;
+    if (sh < 2 || sw < 1) continue;
+    const lift = ((0.5 - sp.sc / 2) * RH / trY) | 0;
     const y0 = horizon - (sh >> 1) + lift, x0 = scrX - (sw >> 1);
     const fogF = clamp((trY - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
-    const lamp = L.lamp ? clamp(1 - trY / 7, 0, 1) * L.lamp : 0;
-    for (let x = Math.max(0, x0); x < Math.min(RW, x0 + sw); x++) {
+    const lamp = L.lamp ? clamp(1 - trY / 8, 0, 1) * L.lamp : 0;
+    const sd = sp.s.d, sww = sp.s.w, shh = sp.s.h;
+    const xa = Math.max(0, x0), xb = Math.min(RW, x0 + sw);
+    const ya = Math.max(0, y0), yb = Math.min(RH, y0 + sh);
+    for (let x = xa; x < xb; x++) {
       if (trY >= zbuf[x]) continue;
-      const tx = (((x - x0) * sp.s.w / sw) | 0);
-      for (let y = Math.max(0, y0); y < Math.min(RH, y0 + sh); y++) {
-        const ty = (((y - y0) * sp.s.h / sh) | 0);
-        const c = sp.s.d[ty * sp.s.w + tx];
-        if (!c) continue;
-        let r = c & 255, g = (c >> 8) & 255, b = (c >> 16) & 255;
-        if (lamp) { r += lamp * 80; g += lamp * 64; b += lamp * 38; }
-        r = r + (fogR - r) * fogF; g = g + (fogG - g) * fogF; b = b + (fogB - b) * fogF;
-        buf32[y * RW + x] = rgb(clamp(r, 0, 255) | 0, clamp(g, 0, 255) | 0, clamp(b, 0, 255) | 0);
+      const tx = ((x - x0) * sww / sw) | 0;
+      for (let y = ya; y < yb; y++) {
+        const ty = ((y - y0) * shh / sh) | 0;
+        const c = sd[ty * sww + tx];
+        const a = c >>> 24;
+        if (!a) continue;
+        let r = c & 255, gg = (c >> 8) & 255, b = (c >> 16) & 255;
+        if (lamp) { r += lamp * 118; gg += lamp * 82; b += lamp * 36; }
+        r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
+        const o = y * RW + x;
+        if (a > 250) {
+          buf32[o] = rgb(clamp(r, 0, 255) | 0, clamp(gg, 0, 255) | 0, clamp(b, 0, 255) | 0);
+        } else {
+          const d = buf32[o], af = a / 255;
+          buf32[o] = rgb(clamp((d & 255) + (r - (d & 255)) * af, 0, 255) | 0,
+                         clamp(((d >> 8) & 255) + (gg - ((d >> 8) & 255)) * af, 0, 255) | 0,
+                         clamp(((d >> 16) & 255) + (b - ((d >> 16) & 255)) * af, 0, 255) | 0);
+        }
       }
     }
   }
 
-  const rc = rbuf.getContext('2d');
-  rc.putImageData(img, 0, 0);
+  rctx.putImageData(img, 0, 0);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(rbuf, 0, 0, RW, RH, 0, 0, cw, ch);
@@ -796,7 +764,7 @@ function onLevelStart(m) {
   $('gold').textContent = '0';
   ['wait', 'elim', 'champ'].forEach(id => $(id).style.display = 'none');
   banner('');
-  makeTextures(level); makeGroundTextures(level); makeSprites(level); buildSky(); buildMini();
+  buildArt(level); buildAO(); buildMini();
   toast(m.stage.name + ' — find the idol');
   beep(392, 587, .3, 'triangle', .05);
 }

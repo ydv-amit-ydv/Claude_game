@@ -43,6 +43,7 @@ LOOT_COOLDOWN = 3.0
 BOAT_COOLDOWN = 6.0
 
 GOLD_POINTS = 10
+UNBANKED_SHARE = 0.5      # gold is worth half until you have reached the idol
 PROGRESS_POINTS = 500
 FINISH_BONUS = 200
 
@@ -158,7 +159,9 @@ def world_msg(room):
 
 # ------------------------------------------------------------------ scoring
 def score_of(p):
-    s = p.money * GOLD_POINTS + round(p.best * PROGRESS_POINTS)
+    """Gold banked at the idol counts double what gold carried past it does."""
+    gold_value = p.money if p.fin else p.money * UNBANKED_SHARE
+    s = round(gold_value * GOLD_POINTS) + round(p.best * PROGRESS_POINTS)
     if p.fin:
         s += FINISH_BONUS
     return s
@@ -167,7 +170,8 @@ def score_of(p):
 def pos_msg(p, force=False, boat=False):
     wd = p.room.world if p.room else None
     m = {"t": "p", "x": p.x, "y": p.y, "s": p.seq, "money": p.money, "face": p.face,
-         "left": wd.dist[p.t] if wd else 0, "prog": round(p.best * 100)}
+         "left": wd.dist[p.t] if wd else 0, "prog": round(p.best * 100),
+         "banked": 1 if p.fin else 0, "sc": score_of(p)}
     if force:
         m["f"] = 1
     if boat:
@@ -280,7 +284,7 @@ def on_move(p, d, seq):
     p.seq = seq
     p.tok = min(3.0, p.tok + (now - p.lm) / MOVE_INTERVAL)
     p.lm = now
-    if room is None or room.phase != "play" or p.fin or p.tok < 1.0:
+    if room is None or room.phase != "play" or p.tok < 1.0:
         p.send(pos_msg(p))
         return
 
@@ -304,7 +308,7 @@ def on_move(p, d, seq):
     # meeting anyone triggers the purse rule
     met = False
     for q in room.players.values():
-        if q is not p and q.t == nt and not q.fin:
+        if q is not p and q.t == nt:
             r = do_loot(p, q)
             if r:
                 note_loot(r[0], -r[2], True)
@@ -351,7 +355,7 @@ def walk_passersby(room):
         d, nt = ahead[0] if (ahead and random.random() < 0.65) else random.choice(opts)
         npc.face, npc.t = d, nt
         for p in room.players.values():
-            if p.t == nt and not p.fin:
+            if p.t == nt:
                 r = do_loot(p, npc)
                 if r:
                     note_loot(r[0], -r[2], False)
@@ -609,7 +613,9 @@ async def ws_session(r, w, headers):
         w.close()
 
 
-PAGES = {"/": "index.html", "/index.html": "index.html", "/admin": "admin.html"}
+PAGES = {"/": "index.html", "/index.html": "index.html", "/admin": "admin.html",
+         "/render.js": "render.js"}
+TYPES = {".html": b"text/html; charset=utf-8", ".js": b"application/javascript; charset=utf-8"}
 
 
 async def handle(r, w):
@@ -628,7 +634,8 @@ async def handle(r, w):
         fname = PAGES.get(path.split("?")[0])
         if fname:
             with open(os.path.join(HERE, fname), "rb") as f:
-                body, status, ctype = f.read(), b"200 OK", b"text/html; charset=utf-8"
+                body, status = f.read(), b"200 OK"
+            ctype = TYPES[".js" if fname.endswith(".js") else ".html"]
         else:
             body, status, ctype = b"Not found", b"404 Not Found", b"text/plain"
         w.write(b"HTTP/1.1 " + status + b"\r\nContent-Type: " + ctype + b"\r\nContent-Length: " +
