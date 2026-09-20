@@ -406,6 +406,17 @@ const PAINT = (() => {
       c.fillRect(cx - T * .15, cy - T * .12, T * .3, T * .04);
       c.fillRect(cx - T * .13, cy + T * .03, T * .025, T * .06);
       c.fillRect(cx + T * .105, cy + T * .03, T * .025, T * .06);
+    } else if (kind < 95) {                       // a fallen mossy log
+      c.fillStyle = 'rgba(24,40,28,.24)';
+      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .22, T * .06, 0, 0, TAU); c.fill();
+      const lg = c.createLinearGradient(cx, cy - T * .08, cx, cy + T * .08);
+      lg.addColorStop(0, '#8a6a42'); lg.addColorStop(1, '#5a4228');
+      c.fillStyle = lg;
+      roundRect(c, cx - T * .22, cy - T * .07, T * .44, T * .15, T * .07); c.fill();
+      c.fillStyle = 'rgba(110,170,96,.5)';
+      c.beginPath(); c.ellipse(cx - T * .05, cy - T * .06, T * .12, T * .035, 0, 0, TAU); c.fill();
+      c.fillStyle = '#6b4f32';
+      c.beginPath(); c.ellipse(cx + T * .22, cy, T * .035, T * .07, 0, 0, TAU); c.fill();
     } else if (kind < 96) {                       // a ring of mushrooms
       for (let i = 0; i < 5; i++) {
         const a = i / 5 * TAU + jx * 4;
@@ -493,6 +504,46 @@ const PAINT = (() => {
       c.beginPath(); c.arc(cx, base - T * .88, T * .12, 0, TAU); c.fill();
       c.fillStyle = 'rgba(120,170,110,.3)';                       // moss
       c.beginPath(); c.ellipse(cx - T * .09, base - T * .3, T * .07, T * .04, 0, 0, TAU); c.fill();
+      return;
+    }
+    if (kind < 46) {                              // a garden pavilion
+      c.fillStyle = P.stone[0];
+      roundRect(c, cx - T * .38, base - T * .3, T * .76, T * .34, T * .05); c.fill();
+      c.strokeStyle = P.stone[1]; c.lineWidth = Math.max(2, T * .07);
+      c.beginPath();
+      c.moveTo(cx - T * .3, base - T * .28); c.lineTo(cx - T * .3, base - T * .8);
+      c.moveTo(cx + T * .3, base - T * .28); c.lineTo(cx + T * .3, base - T * .8);
+      c.moveTo(cx - T * .12, base - T * .28); c.lineTo(cx - T * .12, base - T * .82);
+      c.moveTo(cx + T * .12, base - T * .28); c.lineTo(cx + T * .12, base - T * .82);
+      c.stroke();
+      const rg = c.createLinearGradient(cx - T * .5, base - T * 1.2, cx + T * .5, base - T * .7);
+      rg.addColorStop(0, '#6f8f76'); rg.addColorStop(1, '#3f5c49');
+      c.fillStyle = rg;
+      c.beginPath();
+      c.moveTo(cx - T * .52, base - T * .76); c.lineTo(cx, base - T * 1.3);
+      c.lineTo(cx + T * .52, base - T * .76); c.closePath(); c.fill();
+      c.fillStyle = '#d8bc70';
+      c.beginPath(); c.arc(cx, base - T * 1.34, T * .07, 0, TAU); c.fill();
+      return;
+    }
+    if (kind < 50) {                              // a tiered fountain
+      const pul = .5 + .5 * Math.sin(h2(x, y, 701) * 6.283);
+      c.fillStyle = '#3c6f88';
+      c.beginPath(); c.ellipse(cx, base - T * .1, T * .44, T * .22, 0, 0, TAU); c.fill();
+      c.strokeStyle = P.stone[0]; c.lineWidth = Math.max(2, T * .08);
+      c.beginPath(); c.ellipse(cx, base - T * .1, T * .44, T * .22, 0, 0, TAU); c.stroke();
+      c.fillStyle = P.stone[1];
+      c.fillRect(cx - T * .06, base - T * .56, T * .12, T * .46);
+      c.beginPath(); c.ellipse(cx, base - T * .56, T * .2, T * .09, 0, 0, TAU); c.fill();
+      c.fillStyle = 'rgba(190,232,245,' + (.55 + .25 * pul) + ')';
+      c.beginPath(); c.ellipse(cx, base - T * .6, T * .07, T * .16, 0, 0, TAU); c.fill();
+      for (let i = 0; i < 6; i++) {
+        const a = i / 6 * TAU;
+        c.beginPath();
+        c.ellipse(cx + Math.cos(a) * T * .2, base - T * .48 + Math.abs(Math.sin(a)) * T * .06,
+                  T * .03, T * .05, 0, 0, TAU);
+        c.fill();
+      }
       return;
     }
     if (kind < 52) {                              // a standing stone

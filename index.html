@@ -28,6 +28,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 #top .row{font-size:12.5px;color:var(--dim)}
 #gold{color:var(--gold2);font-weight:800}
 #banked{color:var(--leaf);font-weight:700}
+#bankAmt{color:var(--leaf);font-weight:800}
 
 #lb{right:12px;top:12px;min-width:206px;padding:10px 14px}
 #lb h4{font:700 11px Georgia,serif;color:var(--gold);letter-spacing:1.1px;margin-bottom:7px;
@@ -143,7 +144,8 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 
 <div id="top" class="hud panel"><b id="stageName">The Last Garden</b>
   <div class="row" id="timer"></div>
-  <div class="row">Gold <span id="gold">0</span> · <span id="rank"></span></div>
+  <div class="row">Carrying <span id="gold">0</span> · Banked <span id="bankAmt">0</span></div>
+  <div class="row" id="rank"></div>
   <div class="row" id="dist"></div>
 </div>
 
@@ -181,8 +183,9 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
   <button id="go" class="big" type="button">Enter the garden</button>
   <p id="err"></p>
   <div class="rules">
-    <b>Scoring</b> — gold collected plus how close you got to the idol. You don't have to reach it.<br>
-    <b>Meeting someone</b> — whoever carries <b>less</b> gold takes a cut from whoever carries <b>more</b>. You can't tell runners from passersby.<br>
+    <b>Bank your gold</b> — carry it to the idol and it is safe for good and counts in full. Gold still in your hands counts half and can be taken.<br>
+    <b>Go again</b> — after banking you can set out for more. Every load you run back is locked in.<br>
+    <b>Meeting someone</b> — whoever <b>carries</b> less takes a cut from whoever carries more. Banked gold is untouchable.<br>
     <b>Boats</b> — step onto a landing stage and the ferry carries you clear across the world.
   </div>
 </div></div>
@@ -228,7 +231,7 @@ let cw = 0, ch = 0, dpr = 1;
 let W = 0, H = 0, grid = null, goal = 0, gx = 0, gy = 0, level = 0, stage = null;
 let chests = new Map(), others = new Map(), docks = [], boats = [];
 let me = { id: 0 }, px = 0, py = 0, seq = 0, lastMove = 0, facing = 2;
-let gold = 0, banked = false, finished = false, phase = 'lobby', joined = false, name = '', MI = 110;
+let gold = 0, bankAmt = 0, banked = false, finished = false, phase = 'lobby', joined = false, name = '', MI = 110;
 let mode = 'create', delay = 30, roomCode = '', joinCode = '';
 let view = 0;                      // 0 = first person, 1 = over the shoulder, 2 = whole map
 const held = [], pops = [];
@@ -520,8 +523,16 @@ function handle(m) {
       if (m.l && m.l.length && m.l[0][3]) toast('The idol scatters rich chests!', 'good');
       break;
     case 'banked':
-      banked = true;
-      toast('Gold banked — everything you carry now counts in full', 'good');
+      banked = true; bankAmt = m.bank || 0;
+      $('bankAmt').textContent = bankAmt;
+      if (m.added > 0) {
+        toast(`Banked ${m.added} gold — safe for good`, 'good');
+        pops.push({ text: '\u2713 ' + m.added + ' banked', t: performance.now(), good: true });
+        goldFlash = 1;
+        [660, 880, 1170].forEach((f, i) => beep(f, f * 1.01, .22, 'triangle', .05, i * .07));
+      } else {
+        toast('The idol will keep whatever you bring back', 'good');
+      }
       break;
     case 'loot': onLoot(m); break;
     case 'm': onMeta(m); break;
@@ -531,7 +542,9 @@ function handle(m) {
       $('wait').style.display = 'flex'; beep(523, 1046, .35, 'triangle', .07);
       break;
     case 'eliminated':
-      $('elimMsg').textContent = `You finished #${m.rank} in ${m.stage} with ${m.money} gold, ${m.prog}% of the way to the idol — ${m.score} points.`;
+      $('elimMsg').textContent = `You finished #${m.rank} in ${m.stage} with ${m.money} gold`
+        + (m.bank ? ` (${m.bank} of it banked)` : '')
+        + `, ${m.prog}% of the way to the idol — ${m.score} points.`;
       $('elim').style.display = 'flex'; beep(420, 160, .45, 'triangle', .05);
       break;
     case 'tourEnd':
@@ -572,8 +585,8 @@ function onLevelStart(m) {
     boats.push({ x: b % W, y: (b / W) | 0 });
   });
   others.clear(); pops.length = 0;
-  gold = 0; banked = false; finished = false; phase = 'play';
-  $('gold').textContent = '0';
+  gold = 0; bankAmt = 0; banked = false; finished = false; phase = 'play';
+  $('gold').textContent = '0'; $('bankAmt').textContent = '0';
   ['wait', 'elim', 'champ'].forEach(id => $(id).style.display = 'none');
   banner('');
   buildMini(); chunks.clear();
@@ -586,11 +599,12 @@ function onPos(m) {
   px = m.x; py = m.y;
   if (jump) { camX = px + .5; camY = py + .5; }
   if (typeof m.face === 'number') facing = m.face;
-  gold = m.money; banked = !!m.banked;
-  $('gold').textContent = gold;
-  $('dist').innerHTML = m.fin
-    ? '<span id="banked">Gold banked \u2713</span> · reached the idol'
-    : `${m.prog}% there · ${m.left} steps · gold at half`;
+  gold = m.money; bankAmt = m.bank || 0; banked = bankAmt > 0;
+  $('gold').textContent = gold; $('bankAmt').textContent = bankAmt;
+  $('dist').innerHTML = gold === 0
+    ? (banked ? '<span id="banked">All safe \u2713</span> · go gather more'
+              : `${m.prog}% there · ${m.left} steps to the idol`)
+    : `${m.left} steps to the idol · carried gold is at risk, and worth half`;
   if (m.boat) { toast('The ferry carries you across', 'boat'); boatFlash = 1; beep(220, 440, .5, 'sine', .06); }
   if (m.fin && !finished) {
     finished = true;

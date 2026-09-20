@@ -220,6 +220,8 @@ class World:
     def _ponds(self, rnd, count, centres):
         """Ornamental pools, with a plank walk across the wider ones."""
         w = self.w
+        if self.w < 18:                    # too small to hold a pool
+            return
         for _ in range(count):
             for _try in range(40):
                 cx = rnd.randrange(6, self.w - 6)
@@ -358,6 +360,8 @@ class World:
     def _orchards(self, rnd, count, centres):
         """Trees in ranks, so part of the world looks deliberately planted."""
         w = self.w
+        if self.w < 24:                    # no room to plant rows in a small world
+            return
         for _ in range(count):
             for _try in range(40):
                 cx = rnd.randrange(8, self.w - 8)

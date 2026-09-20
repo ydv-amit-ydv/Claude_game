@@ -12,9 +12,11 @@ Nobody has to reach the idol to advance. Every runner is scored on gold
 carried plus how close they got to it, so a rich runner stuck out in the
 thickets and a poor runner at the sanctum door both rank.
 
-Gold moves by one rule for everyone: when two figures meet, whoever carries
-LESS takes a cut from whoever carries MORE. Passersby wander the world with
-purses of their own, so a fat purse is worth chasing and hoarding is risky.
+Gold you are carrying is at risk: when two figures meet, whoever carries LESS
+takes a cut from whoever carries MORE, and passersby play by the same rule.
+Gold you have left at the idol is safe for good, and counts in full, while
+gold still in your hands counts only half. So the loop is: gather, run it
+back to the idol, and set out again.
 
 Server-authoritative: the layout, passerby purses and chest values never
 leave the server as anything but positions and totals.
@@ -69,7 +71,8 @@ class Passerby:
 
 class Player:
     __slots__ = ("id", "name", "w", "room", "x", "y", "t", "seq", "tok", "lm", "face",
-                 "money", "score", "fin", "got", "best", "last_o", "loot_cd", "boat_cd")
+                 "money", "banked", "trips", "score", "fin", "got", "best", "last_o",
+                 "loot_cd", "boat_cd")
 
     def send(self, frame):
         tr = self.w.transport
@@ -165,9 +168,11 @@ def world_msg(room):
 
 # ------------------------------------------------------------------ scoring
 def score_of(p):
-    """Gold banked at the idol counts double what gold carried past it does."""
-    gold_value = p.money if p.fin else p.money * UNBANKED_SHARE
-    s = round(gold_value * GOLD_POINTS) + round(p.best * PROGRESS_POINTS)
+    """Gold left at the idol is safe and counts in full. Gold still being
+    carried is only worth half, and can still be taken off you."""
+    s = round(p.banked * GOLD_POINTS)
+    s += round(p.money * GOLD_POINTS * UNBANKED_SHARE)
+    s += round(p.best * PROGRESS_POINTS)
     if p.fin:
         s += FINISH_BONUS
     return s
@@ -177,7 +182,7 @@ def pos_msg(p, force=False, boat=False):
     wd = p.room.world if p.room else None
     m = {"t": "p", "x": p.x, "y": p.y, "s": p.seq, "money": p.money, "face": p.face,
          "left": wd.dist[p.t] if wd else 0, "prog": round(p.best * 100),
-         "banked": 1 if p.fin else 0, "sc": score_of(p)}
+         "bank": p.banked, "sc": score_of(p)}
     if force:
         m["f"] = 1
     if boat:
@@ -195,6 +200,8 @@ def reset_player(room, p):
     place(p, random.choice(room.world.spawn), room.world)
     p.got = set()
     p.money = 0
+    p.banked = 0
+    p.trips = 0
     p.fin = False
     p.tok = 1.0
     p.face = 2
@@ -286,14 +293,16 @@ def end_stage(room, now):
         p.score = score_of(p)
     ranked = sorted(room.players.values(), key=lambda p: -p.score)
     room.history.append({"stage": room.stage, "name": STAGE_NAMES[room.stage],
-                         "top": [[p.name, p.score, p.money, round(p.best * 100)] for p in ranked[:10]]})
+                         "top": [[p.name, p.score, p.banked + p.money, round(p.best * 100)]
+                                 for p in ranked[:10]]})
 
     nxt = room.stage + 1
     if nxt < len(STAGE_CAPS) and len(ranked) > 1:
         cut = STAGE_CAPS[nxt]
         qualifiers, out = ranked[:cut], ranked[cut:]
         for i, p in enumerate(out):
-            p.send(F({"t": "eliminated", "rank": cut + i + 1, "score": p.score, "money": p.money,
+            p.send(F({"t": "eliminated", "rank": cut + i + 1, "score": p.score,
+                      "money": p.banked + p.money, "bank": p.banked,
                       "prog": round(p.best * 100), "stage": STAGE_NAMES[room.stage]}))
             p.room = None
         room.players = {p.id: p for p in qualifiers}
@@ -308,7 +317,7 @@ def end_stage(room, now):
         room.phase = "done"
         room.passersby = []
         broadcast(room, F({"t": "tourEnd", "champion": room.champion,
-                           "top": [[p.name, p.score, p.money] for p in ranked[:10]]}))
+                           "top": [[p.name, p.score, p.banked + p.money] for p in ranked[:10]]}))
     broadcast_admins(room, F({"t": "adminStage", "stage": stage_info(room), "phase": room.phase,
                               "history": room.history, "champion": room.champion}))
 
@@ -370,13 +379,20 @@ def on_move(p, d, seq):
                 p.send(pos_msg(p, True, boat=True))
                 return
 
-    if nt == wd.goal and not p.fin:
+    if nt == wd.goal:
+        first = not p.fin
+        dropped = p.money
+        p.banked += dropped               # safe from here on: nobody can take it
+        p.money = 0
         p.fin = True
         p.best = 1.0
-        # the idol rewards the arrival by scattering rich chests for everyone
-        spawn_chests(room, BONUS_PER_ARRIVAL, bonus=True)
-        broadcast(room, F({"t": "reached", "id": p.id}))
-        p.send(F({"t": "banked"}))
+        p.trips += 1
+        if dropped or first:
+            # the idol thanks each delivery by scattering rich chests for everyone
+            spawn_chests(room, BONUS_PER_ARRIVAL if first else 1, bonus=True)
+            p.send(F({"t": "banked", "added": dropped, "bank": p.banked, "trips": p.trips}))
+        if first:
+            broadcast(room, F({"t": "reached", "id": p.id}))
     p.send(pos_msg(p))
 
 
@@ -432,22 +448,23 @@ def broadcast_near(room):
     # the admin sees the real runners only - never the wandering passersby
     if room.admins:
         broadcast_admins(room, F({"t": "adminPos",
-                                  "p": [[e.id, e.name, e.x, e.y, e.money, 1 if e.fin else 0,
-                                         score_of(e)] for e in ps]}))
+                                  "p": [[e.id, e.name, e.x, e.y, e.banked + e.money,
+                                         1 if e.fin else 0, score_of(e)] for e in ps]}))
 
 
 def send_meta(room, now):
     reveal = room.stage == len(STAGE_NAMES) - 1
     ps = sorted(room.players.values(), key=lambda p: -score_of(p))
-    top = [[p.name if reveal else "Runner", score_of(p), p.money, round(p.best * 100)] for p in ps[:8]]
+    top = [[p.name if reveal else "Runner", score_of(p), p.banked + p.money, round(p.best * 100)]
+           for p in ps[:8]]
     left = max(0, int(room.ends_at - now))
     for i, p in enumerate(ps):
         p.send(F({"t": "m", "n": len(ps), "tl": left, "lb": top, "rk": i + 1,
                   "sc": score_of(p), "money": p.money, "prog": round(p.best * 100)}))
     if room.admins:
         broadcast_admins(room, F({"t": "adminMeta", "n": len(ps), "tl": left,
-                                  "lb": [[p.name, score_of(p), p.money, round(p.best * 100)]
-                                         for p in ps[:20]]}))
+                                  "lb": [[p.name, score_of(p), p.banked + p.money,
+                                          round(p.best * 100)] for p in ps[:20]]}))
 
 
 def lobby_msg(room):
@@ -506,6 +523,8 @@ def new_player(w, name):
     p.w, p.seq, p.score, p.room = w, 0, 0, None
     p.x = p.y = p.t = 0
     p.money = 0
+    p.banked = 0
+    p.trips = 0
     p.fin = False
     p.best = 0.0
     p.face = 2
