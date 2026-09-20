@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>Labyrinth — Admin</title>
+<style>
+:root{--bg:#171018;--panel:#221a24;--ink:#f3ecec;--dim:#a898a6;--gold:#e8ad3f;--good:#3fbd6f;--bad:#ff5a72;--line:rgba(255,255,255,.1)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,Roboto,sans-serif}
+body{display:flex;flex-direction:column}
+header{padding:12px 18px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header h1{font:700 20px Georgia,serif;color:var(--gold)}
+header input{padding:8px 10px;font:700 15px system-ui;letter-spacing:2px;text-transform:uppercase;background:#2c2130;border:1px solid var(--line);border-radius:6px;color:var(--ink);width:130px}
+header button{padding:8px 14px;font:700 13px system-ui;background:var(--gold);color:#2a1a06;border:0;border-radius:6px;cursor:pointer}
+#stageTag{padding:4px 10px;border-radius:20px;background:rgba(232,173,63,.16);color:var(--gold);font-weight:700;font-size:12.5px}
+#status{color:var(--dim);font-size:12.5px}
+main{flex:1;display:flex;min-height:0}
+#mapWrap{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;background:radial-gradient(ellipse at 50% 20%,#241a26,#171018)}
+canvas{image-rendering:pixelated}
+#side{width:300px;background:var(--panel);border-left:1px solid var(--line);padding:14px;overflow-y:auto;flex-shrink:0}
+#side h2{font:700 14px Georgia,serif;color:var(--gold);margin:14px 0 6px}
+#side h2:first-child{margin-top:0}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td{padding:4px 2px;border-bottom:1px solid var(--line)}
+td.rank{color:var(--dim);width:22px}
+td.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120px}
+td.val{text-align:right;color:var(--gold);font-weight:700}
+.fin{color:var(--good)}
+#hist div{font-size:12.5px;color:var(--dim);margin-bottom:8px;padding-bottom:8px;border-bottom:1px dashed var(--line)}
+#hist b{color:var(--ink)}
+#empty{display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--dim);margin:auto}
+#empty p{max-width:280px;text-align:center}
+@media(max-width:760px){main{flex-direction:column}#side{width:100%;border-left:0;border-top:1px solid var(--line);max-height:40vh}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Labyrinth · Admin</h1>
+  <input id="code" maxlength="6" placeholder="TOURNEY ID">
+  <button id="go">Watch</button>
+  <span id="stageTag"></span>
+  <span id="status"></span>
+</header>
+<main>
+  <div id="mapWrap">
+    <div id="empty"><p>Enter a tournament's 6-character ID above to spectate it live — the whole maze, every runner's position, and the running leaderboard.</p></div>
+    <canvas id="g" style="display:none"></canvas>
+  </div>
+  <div id="side">
+    <h2>Live leaderboard</h2>
+    <table id="lbTable"><tbody></tbody></table>
+    <h2>Stage history</h2>
+    <div id="hist"></div>
+    <h2 id="champHead" style="display:none">Champion</h2>
+    <div id="champ" style="color:var(--gold);font-weight:700"></div>
+  </div>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const cv = $('g'), ctx = cv.getContext('2d');
+let W = 39, H = 39, grid = null, goal = 0, T = 10;
+let players = [];   // [id,name,x,y,money,fin]
+
+function buildMaze() {
+  cv.width = W * T; cv.height = H * T;
+  cv.style.width = (W * T) + 'px'; cv.style.height = (H * T) + 'px';
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const wall = grid[y * W + x] === 1;
+    ctx.fillStyle = wall ? ((x + y) % 2 ? '#3a2a3d' : '#443152') : ((x ^ y) & 1 ? '#241c28' : '#2a2030');
+    ctx.fillRect(x * T, y * T, T, T);
+  }
+  const gx = goal % W, gy = (goal / W) | 0;
+  ctx.fillStyle = '#3fbd6f'; ctx.beginPath(); ctx.arc(gx * T + T / 2, gy * T + T / 2, T * .5, 0, 6.283); ctx.fill();
+}
+
+function redrawPlayers() {
+  if (!grid) return;
+  buildMaze();
+  const ranked = [...players].sort((a, b) => b[4] - a[4]);
+  ranked.forEach(([id, n, x, y, money, fin], i) => {
+    const hue = (id * 137) % 360;
+    ctx.fillStyle = i < 3 ? '#ffcf6b' : `hsl(${hue},70%,60%)`;
+    ctx.beginPath(); ctx.arc(x * T + T / 2, y * T + T / 2, T * .4, 0, 6.283); ctx.fill();
+    if (fin) { ctx.strokeStyle = '#3fbd6f'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x * T + T / 2, y * T + T / 2, T * .6, 0, 6.283); ctx.stroke(); }
+  });
+}
+
+function renderLb(rows) {
+  const tb = $('lbTable').querySelector('tbody'); tb.textContent = '';
+  rows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="rank">#${i + 1}</td><td class="name${r[2] ? ' fin' : ''}">${r[0]}${r[2] ? ' ✓' : ''}</td><td class="val">${r[1]}g</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+function renderHist(history) {
+  const h = $('hist'); h.textContent = '';
+  if (!history || !history.length) { h.innerHTML = '<div style="color:var(--dim)">No stage has finished yet.</div>'; return; }
+  history.forEach(s => {
+    const d = document.createElement('div');
+    d.innerHTML = `<b>${s.name}</b><br>` + s.top.slice(0, 5).map((r, i) => `#${i + 1} ${r[0]} — ${r[1]}pts`).join('<br>');
+    h.appendChild(d);
+  });
+}
+
+let ws;
+function connect(code) {
+  const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  ws = new WebSocket(base);
+  ws.onopen = () => { $('status').textContent = 'connecting…'; ws.send(JSON.stringify({ t: 'admin', code })); };
+  ws.onclose = () => { $('status').textContent = 'disconnected'; };
+  ws.onmessage = e => handle(JSON.parse(e.data));
+}
+
+function handle(m) {
+  switch (m.t) {
+    case 'err':
+      $('status').textContent = m.msg; break;
+    case 'adminHi':
+      $('status').textContent = 'watching ' + m.code;
+      $('stageTag').textContent = m.stage.name + ' (cap ' + m.stage.cap + ') · ' + m.phase;
+      renderHist(m.history);
+      if (m.champion) { $('champHead').style.display = 'block'; $('champ').textContent = '🏆 ' + m.champion; }
+      $('empty').style.display = 'none'; cv.style.display = 'block';
+      break;
+    case 'adminMaze':
+      W = m.W; H = m.H;
+      const g = new Uint8Array(W * H);
+      for (let i = 0; i < g.length; i++) g[i] = m.g.charCodeAt(i) - 48;
+      grid = g; goal = m.goal;
+      T = Math.max(4, Math.min(16, Math.floor(900 / Math.max(W, H))));
+      buildMaze();
+      break;
+    case 'adminPos':
+      players = m.l; redrawPlayers();
+      break;
+    case 'adminMeta':
+      $('stageTag').textContent = $('stageTag').textContent.split(' · ')[0] + ' · ' + m.n + ' racing · ' + (m.tl != null ? m.tl + 's left' : '');
+      renderLb(m.lb);
+      break;
+    case 'adminStage':
+      $('stageTag').textContent = m.stage.name + ' (cap ' + m.stage.cap + ') · ' + m.phase;
+      renderHist(m.history);
+      if (m.champion) { $('champHead').style.display = 'block'; $('champ').textContent = '🏆 ' + m.champion; }
+      break;
+  }
+}
+
+$('go').onclick = () => {
+  const code = $('code').value.trim().toUpperCase();
+  if (code.length !== 6) { $('status').textContent = 'enter a 6-character ID'; return; }
+  connect(code);
+};
+$('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
+const qCode = new URLSearchParams(location.search).get('code');
+if (qCode) { $('code').value = qCode; $('go').click(); }
+</script>
+</body>
+</html>

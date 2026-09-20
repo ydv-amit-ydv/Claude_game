@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
 """
-LABYRINTH - multiplayer maze race, tournament rooms, whole-map view.
+LABYRINTH - tactical maze-race tournaments for live events.
 Zero dependencies (Python 3.8+).   Run:  python server.py   ->  open http://<your-ip>:8000
 
-Players create or join a tournament by a 6-character code. A tournament can be
-scheduled to start at a fixed time in the future so everyone begins the same
-maze together regardless of when they finished loading or logging in.
+A tournament runs three back-to-back stages under one shareable ID:
+  Stage 0  Qualifiers   up to 300 runners
+  Stage 1  Semifinal    top 50 from stage 0 (by score)
+  Stage 2  Final        top 10 from stage 1 (by score)
+Runners race the whole visible maze, grab gold from chests, dodge thieves,
+and can fire a short-range stun bolt at rivals to slow them down. Whoever
+tops the Final becomes champion.
+
+An admin can watch any tournament live (maze, every runner's position, and
+the running leaderboard) just by knowing its ID — open /admin and enter it.
+
 Server-authoritative: the maze, thieves and chest values never leave the
 server as anything but positions/values.
 """
@@ -16,26 +24,36 @@ from collections import deque
 HOST, PORT = "0.0.0.0", int(os.environ.get("PORT", 8000))
 CELLS = 19                     # maze is CELLS x CELLS cells -> (2*CELLS+1)^2 tiles (whole map is shown at once)
 W = H = CELLS * 2 + 1
-MOVE_INTERVAL = 0.11            # seconds per tile
-TICK = 0.1                      # world tick (nearby-player + thief updates)
-THIEF_INTERVAL = 0.42           # seconds per thief step
-ROUND_MAX = 240                 # seconds before a round is abandoned
-FINISH_GRACE = 22               # seconds left after the first finisher
-INTERMISSION = 10
+MOVE_INTERVAL = 0.11
+TICK = 0.1
+THIEF_INTERVAL = 0.42
+ROUND_MAX = 240
+FINISH_GRACE = 22
+INTERMISSION = 18               # gap before the next stage's lobby opens
 MAX_PLAYERS_PER_ROOM = 300
-BRAID = 0.02                    # share of walls knocked out to create loops
-CHAMBERS = 10                   # open chambers
+BRAID = 0.02
+CHAMBERS = 10
 N_CHESTS = 26
 N_THIEVES = 9
 CHEST_MIN, CHEST_MAX = 6, 22
-STEAL_MIN, STEAL_MAX = 0.25, 0.55   # fraction of carried gold a thief takes
+STEAL_MIN, STEAL_MAX = 0.25, 0.55
 POINTS = (10, 7, 5, 4, 3, 2, 1)
 DIRS = ((0, -1), (1, 0), (0, 1), (-1, 0))          # up right down left
 HERE = os.path.dirname(os.path.abspath(__file__))
-TOP_VISIBLE = 5                 # only the leading few runners are shown on the map
+TOP_VISIBLE = 5                 # only the leading few runners are shown on a player's own map
 CODE_CHARS = "".join(c for c in string.ascii_uppercase + string.digits if c not in "0O1IL")
 MIN_DELAY, MAX_DELAY = 10, 3600
-ROOM_IDLE_TTL = 90               # seconds an empty room is kept around before it's dropped
+ROOM_IDLE_TTL = 180
+
+STAGE_NAMES = ["Qualifiers", "Semifinal", "Final"]
+STAGE_CAPS = [300, 50, 10]
+
+# ------------------------------------------------------------------ combat
+SHOOT_COOLDOWN = 1.6
+SHOOT_RANGE = 11
+STUN_DURATION = 2.2
+STUN_LOSS_FRAC = 0.3
+SHOOT_BOUNTY = 8
 
 
 # ------------------------------------------------------------------ maze
@@ -125,7 +143,7 @@ class Maze:
 # ------------------------------------------------------------------ state
 class Player:
     __slots__ = ("id", "name", "hue", "w", "room", "x", "y", "t", "seq", "tok", "lm",
-                 "money", "score", "fin", "got", "last_o")
+                 "money", "score", "fin", "got", "last_o", "shot_at", "stun_until")
 
     def send(self, frame):
         tr = self.w.transport
@@ -137,20 +155,35 @@ class Player:
         self.w.write(frame)
 
 
+class Admin:
+    __slots__ = ("w", "room")
+
+    def send(self, frame):
+        tr = self.w.transport
+        if tr.is_closing():
+            return
+        self.w.write(frame)
+
+
 class Room:
+    """One tournament: a shareable ID running three sequential stages."""
     def __init__(self, code, start_at):
         self.code = code
         self.players = {}
+        self.admins = set()
+        self.stage = 0
         self.round = 0
         self.maze = None
-        self.phase = "lobby"            # lobby -> play -> over -> play -> ...
-        self.start_at = start_at        # epoch seconds the first round begins
+        self.phase = "lobby"            # lobby -> play -> over -> (next stage) lobby -> ... -> done
+        self.start_at = start_at
         self.t0 = 0.0
         self.first = None
         self.fins = []
         self.next_at = 0.0
         self.last_thief = 0.0
         self.empty_since = None
+        self.history = []               # per-stage results, for admin review
+        self.champion = None
 
 
 ROOMS = {}
@@ -177,6 +210,11 @@ def broadcast(room, frame, skip=None):
     for p in room.players.values():
         if p is not skip:
             p.send(frame)
+
+
+def broadcast_admins(room, frame):
+    for a in room.admins:
+        a.send(frame)
 
 
 def gen_code():
@@ -224,32 +262,65 @@ def reset_player(room, p):
     p.tok = 1.0
     p.lm = time.monotonic()
     p.last_o = None
+    p.shot_at = 0.0
+    p.stun_until = 0.0
+
+
+def stage_info(room):
+    return {"idx": room.stage, "name": STAGE_NAMES[room.stage], "cap": STAGE_CAPS[room.stage]}
 
 
 def lobby_msg(room):
     left = max(0, round(room.start_at - time.time()))
-    return F({"t": "lobby", "code": room.code, "startIn": left,
+    return F({"t": "lobby", "code": room.code, "startIn": left, "stage": stage_info(room),
               "players": [[q.id, q.name] for q in room.players.values()]})
 
 
 def start_round(room):
-    """Fires the first (scheduled) round, or the next one after an intermission."""
     room.round += 1
     room.maze = Maze(random.getrandbits(48))
     room.phase, room.t0, room.first, room.fins = "play", time.time(), None, []
     room.last_thief = time.time()
     roster = {q.id: [q.name, q.hue] for q in room.players.values()}
-    broadcast(room, F({"t": "n", "r": room.round, "roster": roster, **maze_msg(room)}))
+    broadcast(room, F({"t": "n", "r": room.round, "roster": roster, "stage": stage_info(room), **maze_msg(room)}))
     for p in room.players.values():
         reset_player(room, p)
         p.send(pos_msg(p, True))
+    if room.admins:
+        broadcast_admins(room, F({"t": "adminMaze", **maze_msg(room)}))
+        broadcast_admins(room, F({"t": "adminStage", "stage": stage_info(room), "phase": room.phase,
+                                   "history": room.history, "champion": room.champion}))
 
 
 def end_round(room, now):
-    room.phase, room.next_at = "over", now + INTERMISSION
-    top = sorted(room.players.values(), key=lambda p: -p.score)[:5]
-    broadcast(room, F({"t": "e", "res": [[n, round(t, 1), mo, sc] for n, t, mo, sc in room.fins[:10]],
-                        "sc": [[p.name, p.score] for p in top if p.score > 0], "nx": INTERMISSION}))
+    """Score everyone, cut to the next stage (or crown a champion)."""
+    ranked = sorted(room.players.values(),
+                     key=lambda p: -(p.score if p.fin else score_of(p.money, ROUND_MAX)))
+    for p in ranked:
+        if p.fin is None:
+            p.score = score_of(p.money, ROUND_MAX)
+
+    room.history.append({"stage": room.stage, "name": STAGE_NAMES[room.stage],
+                          "top": [[p.name, p.score] for p in ranked[:10]]})
+
+    next_stage = room.stage + 1
+    if next_stage < len(STAGE_CAPS):
+        cutoff = STAGE_CAPS[next_stage]
+        qualifiers, eliminated = ranked[:cutoff], ranked[cutoff:]
+        for i, p in enumerate(eliminated):
+            p.send(F({"t": "eliminated", "rank": cutoff + i + 1, "score": p.score, "stage": STAGE_NAMES[room.stage]}))
+        room.players = {p.id: p for p in qualifiers}
+        room.stage = next_stage
+        room.phase, room.start_at = "lobby", now + INTERMISSION
+        broadcast(room, F({"t": "qualified", "stage": STAGE_NAMES[room.stage], "startIn": INTERMISSION}))
+    else:
+        champ = ranked[0] if ranked else None
+        room.champion = champ.name if champ else None
+        room.phase = "done"
+        broadcast(room, F({"t": "tourEnd", "champion": room.champion,
+                            "top": [[p.name, p.score] for p in ranked[:10]]}))
+    broadcast_admins(room, F({"t": "adminStage", "stage": stage_info(room), "phase": room.phase,
+                               "history": room.history, "champion": room.champion}))
 
 
 def finish(room, p):
@@ -267,11 +338,11 @@ def finish(room, p):
 
 def on_move(p, d, seq):
     room = p.room
-    now = time.monotonic()
+    now_m = time.monotonic()
     p.seq = seq
-    p.tok = min(3.0, p.tok + (now - p.lm) / MOVE_INTERVAL)
-    p.lm = now
-    if room is None or room.phase != "play":
+    p.tok = min(3.0, p.tok + (now_m - p.lm) / MOVE_INTERVAL)
+    p.lm = now_m
+    if room is None or room.phase != "play" or now_m < p.stun_until:
         p.send(pos_msg(p))
         return
     m = room.maze
@@ -301,6 +372,40 @@ def on_move(p, d, seq):
     p.send(pos_msg(p))
 
 
+def on_shoot(p, d):
+    room = p.room
+    now_m = time.monotonic()
+    if room is None or room.phase != "play" or p.fin is not None or now_m < p.stun_until:
+        return
+    if now_m - p.shot_at < SHOOT_COOLDOWN or type(d) is not int or not (0 <= d < 4):
+        return
+    p.shot_at = now_m
+    m = room.maze
+    dx, dy = DIRS[d]
+    t, hit, travelled = p.t, None, 0
+    for step in range(1, SHOOT_RANGE + 1):
+        nt = t + dx + dy * W
+        if m.grid[nt] != 0:
+            break
+        t = nt
+        travelled = step
+        for q in room.players.values():
+            if q is not p and q.t == t and q.fin is None:
+                hit = q
+                break
+        if hit:
+            break
+    if hit:
+        hit.stun_until = time.monotonic() + STUN_DURATION
+        loss = round(hit.money * STUN_LOSS_FRAC)
+        hit.money = max(0, hit.money - loss)
+        p.money += SHOOT_BOUNTY
+        hit.send(F({"t": "stunned", "dur": STUN_DURATION, "by": p.name}))
+        hit.send(pos_msg(hit, True))
+    broadcast(room, F({"t": "shot", "id": p.id, "x": p.x, "y": p.y, "d": d, "len": travelled,
+                        "hit": hit.id if hit else None}))
+
+
 def step_thieves(room):
     m = room.maze
     for th in m.thieves:
@@ -312,7 +417,7 @@ def step_thieves(room):
 
 
 def broadcast_near(room):
-    """Only the leading few runners (by gold / finish) are ever shown on the map."""
+    """Runners only ever see the leading few on their own map."""
     ps = list(room.players.values())
     top = sorted(ps, key=lambda p: (0, p.fin[1]) if p.fin else (1, -p.money))[:TOP_VISIBLE]
     lst_all = [[p.id, p.x, p.y] for p in top]
@@ -321,6 +426,9 @@ def broadcast_near(room):
         if others != p.last_o:
             p.last_o = others
             p.send(F({"t": "o", "l": others}))
+    if room.admins:
+        broadcast_admins(room, F({"t": "adminPos", "l": [[q.id, q.name, q.x, q.y, q.money,
+                                                            1 if q.fin else 0] for q in ps]}))
 
 
 def send_meta(room, now):
@@ -333,6 +441,9 @@ def send_meta(room, now):
         tl, gl = 0, -1
     for i, p in enumerate(ps):
         p.send(F({"t": "m", "n": len(ps), "tl": tl, "gl": gl, "lb": top, "rk": i + 1, "money": p.money}))
+    if room.admins:
+        broadcast_admins(room, F({"t": "adminMeta", "n": len(ps), "tl": tl, "gl": gl,
+                                   "lb": [[p.name, p.money, 1 if p.fin else 0] for p in ps[:20]]}))
 
 
 async def game_loop():
@@ -344,7 +455,7 @@ async def game_loop():
             room = ROOMS.get(code)
             if room is None:
                 continue
-            if not room.players:
+            if not room.players and not room.admins:
                 if room.empty_since is None:
                     room.empty_since = now
                 elif now - room.empty_since >= ROOM_IDLE_TTL:
@@ -352,7 +463,7 @@ async def game_loop():
                 continue
             room.empty_since = None
             if room.phase == "lobby":
-                if now >= room.start_at:
+                if now >= room.start_at and room.players:
                     start_round(room)
                 else:
                     broadcast(room, lobby_msg(room))
@@ -362,14 +473,12 @@ async def game_loop():
                     step_thieves(room)
                 if (room.first and now - room.first >= FINISH_GRACE) or now - room.t0 >= ROUND_MAX:
                     end_round(room, now)
-            elif room.phase == "over" and now >= room.next_at:
-                start_round(room)
-            if room.phase != "lobby":
+            if room.phase == "play":
                 broadcast_near(room)
         if now - last_meta >= 1:
             last_meta = now
             for room in ROOMS.values():
-                if room.players and room.phase != "lobby":
+                if room.players and room.phase == "play":
                     send_meta(room, now)
 
 
@@ -387,6 +496,8 @@ def new_player(w, name):
     p.fin = None
     p.got = set()
     p.last_o = None
+    p.shot_at = 0.0
+    p.stun_until = 0.0
     return p
 
 
@@ -400,23 +511,30 @@ def create_room(p, delay):
 
 
 def join_room(p, room):
+    if room.stage != 0:
+        p.send(F({"t": "err", "msg": "This tournament has moved past qualifiers - only its top runners continue."}))
+        return False
+    if len(room.players) >= STAGE_CAPS[0]:
+        p.send(F({"t": "err", "msg": "This tournament is full (300 runners)."}))
+        return False
     p.room = room
     room.players[p.id] = p
+    p.x = p.y = p.t = 0
+    cfg = {"W": W, "H": H, "mi": int(MOVE_INTERVAL * 1000), "roundMax": ROUND_MAX,
+           "shootCd": SHOOT_COOLDOWN, "stunDur": STUN_DURATION}
     if room.phase == "lobby":
-        p.x = p.y = p.t = 0
         p.send(F({"t": "w", "id": p.id, "hue": p.hue, "roster": {}, "ph": "lobby", "r": room.round,
-                   "code": room.code,
-                   "cfg": {"W": W, "H": H, "mi": int(MOVE_INTERVAL * 1000), "roundMax": ROUND_MAX}}))
+                   "code": room.code, "stage": stage_info(room), "cfg": cfg}))
         broadcast(room, lobby_msg(room))
     else:
         reset_player(room, p)
         roster = {q.id: [q.name, q.hue] for q in room.players.values()}
         p.send(F({"t": "w", "id": p.id, "hue": p.hue, "roster": roster, "ph": room.phase, "r": room.round,
-                   "code": room.code,
-                   "cfg": {"W": W, "H": H, "mi": int(MOVE_INTERVAL * 1000), "roundMax": ROUND_MAX}}))
-        p.send(F({"t": "n", "r": room.round, **maze_msg(room)}))
+                   "code": room.code, "stage": stage_info(room), "cfg": cfg}))
+        p.send(F({"t": "n", "r": room.round, "roster": roster, "stage": stage_info(room), **maze_msg(room)}))
         p.send(pos_msg(p, True))
         broadcast(room, F({"t": "j", "id": p.id, "n": p.name, "h": p.hue}), skip=p)
+    return True
 
 
 def leave_room(p):
@@ -429,6 +547,26 @@ def leave_room(p):
         else:
             broadcast(room, F({"t": "l", "id": p.id}))
     p.room = None
+
+
+def join_admin(w, code):
+    room = ROOMS.get(code)
+    if room is None:
+        w.write(F({"t": "err", "msg": "No tournament with that ID."}))
+        return None
+    a = Admin()
+    a.w, a.room = w, room
+    room.admins.add(a)
+    a.send(F({"t": "adminHi", "code": room.code, "stage": stage_info(room), "phase": room.phase,
+               "history": room.history, "champion": room.champion}))
+    if room.maze:
+        a.send(F({"t": "adminMaze", **maze_msg(room)}))
+    return a
+
+
+def leave_admin(a):
+    if a and a.room:
+        a.room.admins.discard(a)
 
 
 async def read_frame(r):
@@ -461,7 +599,7 @@ async def ws_session(r, w, headers):
             sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         except OSError:
             pass
-    p = None
+    p, adm = None, None
     try:
         while True:
             op, data = await asyncio.wait_for(read_frame(r), 75)
@@ -477,30 +615,36 @@ async def ws_session(r, w, headers):
                 t = m.get("t")
             except (ValueError, AttributeError):
                 continue
-            if p is None:
-                if t != "hi":
-                    continue
-                p = new_player(w, m.get("name"))
-                mode, code = m.get("mode"), str(m.get("code") or "").strip().upper()
-                if mode == "join":
-                    room = ROOMS.get(code)
-                    if room is None or len(room.players) >= MAX_PLAYERS_PER_ROOM:
-                        p.send(F({"t": "err", "msg": "That tournament code was not found."}))
-                        p = None
-                        continue
-                    join_room(p, room)
-                else:
-                    create_room(p, m.get("delay"))
+            if p is None and adm is None:
+                if t == "hi":
+                    p = new_player(w, m.get("name"))
+                    mode, code = m.get("mode"), str(m.get("code") or "").strip().upper()
+                    if mode == "join":
+                        room = ROOMS.get(code)
+                        if room is None:
+                            p.send(F({"t": "err", "msg": "That tournament code was not found."}))
+                            p = None
+                            continue
+                        if not join_room(p, room):
+                            p = None
+                    else:
+                        create_room(p, m.get("delay"))
+                elif t == "admin":
+                    adm = join_admin(w, str(m.get("code") or "").strip().upper())
                 continue
-            if t == "m":
+            if p and t == "m":
                 d, s = m.get("d"), m.get("s")
                 if type(d) is int and 0 <= d < 4 and type(s) is int:
                     on_move(p, d, s)
+            elif p and t == "shoot":
+                on_shoot(p, m.get("d"))
     except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, ValueError, OSError):
         pass
     finally:
         if p:
             leave_room(p)
+        if adm:
+            leave_admin(adm)
         w.close()
 
 
@@ -517,8 +661,10 @@ async def handle(r, w):
         await ws_session(r, w, headers)
         return
     try:
-        if path.split("?")[0] in ("/", "/index.html"):
-            with open(os.path.join(HERE, "index.html"), "rb") as f:
+        route = path.split("?")[0]
+        fname = "admin.html" if route == "/admin" else "index.html" if route in ("/", "/index.html") else None
+        if fname:
+            with open(os.path.join(HERE, fname), "rb") as f:
                 body, status, ctype = f.read(), b"200 OK", b"text/html; charset=utf-8"
         else:
             body, status, ctype = b"Not found", b"404 Not Found", b"text/plain"
@@ -545,7 +691,9 @@ def lan_ip():
 async def main():
     server = await asyncio.start_server(handle, HOST, PORT, backlog=2048)
     asyncio.create_task(game_loop())
-    print("LABYRINTH running  ->  http://%s:%d   (local: http://localhost:%d)" % (lan_ip(), PORT, PORT))
+    ip = lan_ip()
+    print("LABYRINTH running  ->  http://%s:%d   (local: http://localhost:%d)" % (ip, PORT, PORT))
+    print("Admin dashboard     ->  http://%s:%d/admin" % (ip, PORT))
     async with server:
         await server.serve_forever()
 
