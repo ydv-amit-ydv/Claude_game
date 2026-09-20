@@ -38,6 +38,10 @@ STAGE_NAMES = [lv["name"] for lv in worldgen.LEVELS]
 STAGE_CAPS = [300, 50, 10]
 STAGE_SECONDS = [180, 180, 240]
 
+CHEST_RESPAWN = 22.0      # seconds between fresh chests appearing
+BONUS_PER_ARRIVAL = 3     # rich chests released each time someone reaches the idol
+BONUS_MIN, BONUS_MAX = 18, 40
+
 LOOT_FRAC = 0.28
 LOOT_COOLDOWN = 3.0
 BOAT_COOLDOWN = 6.0
@@ -98,10 +102,12 @@ class Room:
         self.t0 = 0.0
         self.ends_at = 0.0
         self.last_walk = 0.0
+        self.last_chest = 0.0
         self.empty_since = None
         self.history = []
         self.champion = None
         self.next_npc = -1
+        self.next_chest = 0
 
 
 ROOMS = {}
@@ -220,6 +226,34 @@ def note_loot(entity, delta, from_player):
                        "money": entity.money}))
 
 
+def spawn_chests(room, count, bonus=False):
+    """Put fresh chests into the world and tell everyone where they landed."""
+    wd = room.world
+    if wd is None or len(wd.chests) > len(wd.floors) // 18:
+        return []
+    taken = {c["t"] for c in wd.chests}
+    for p in room.players.values():
+        taken.add(p.t)
+    spots = [t for t in wd.floors if wd.g[t] == worldgen.GROUND and t not in taken and wd.dist[t] > 4]
+    if not spots:
+        return []
+    made = []
+    for _ in range(count):
+        t = random.choice(spots)
+        cid = room.next_chest
+        room.next_chest += 1
+        v = random.randint(BONUS_MIN, BONUS_MAX) if bonus else random.randint(5, 20)
+        wd.chests.append({"id": cid, "t": t, "v": v})
+        made.append([cid, t, v, 1 if bonus else 0])
+        taken.add(t)
+    if made:
+        broadcast(room, F({"t": "chestAdd", "l": made}))
+        if room.admins:
+            broadcast_admins(room, F({"t": "adminChests",
+                                      "l": [[c["id"], c["t"], c["v"]] for c in wd.chests]}))
+    return made
+
+
 # ------------------------------------------------------------------ stages
 def start_stage(room):
     room.world = worldgen.World(room.stage, random.getrandbits(48))
@@ -227,7 +261,9 @@ def start_stage(room):
     room.t0 = time.time()
     room.ends_at = room.t0 + STAGE_SECONDS[room.stage]
     room.last_walk = room.t0
+    room.last_chest = room.t0
 
+    room.next_chest = len(room.world.chests)
     room.passersby = []
     for _ in range(room.world.n_passersby):
         room.passersby.append(Passerby(room.next_npc, random.choice(room.world.floors),
@@ -337,7 +373,10 @@ def on_move(p, d, seq):
     if nt == wd.goal and not p.fin:
         p.fin = True
         p.best = 1.0
+        # the idol rewards the arrival by scattering rich chests for everyone
+        spawn_chests(room, BONUS_PER_ARRIVAL, bonus=True)
         broadcast(room, F({"t": "reached", "id": p.id}))
+        p.send(F({"t": "banked"}))
     p.send(pos_msg(p))
 
 
@@ -442,6 +481,9 @@ async def game_loop():
                 if now - room.last_walk >= PASSERBY_INTERVAL:
                     room.last_walk = now
                     walk_passersby(room)
+                if now - room.last_chest >= CHEST_RESPAWN:
+                    room.last_chest = now
+                    spawn_chests(room, 2 + len(room.players) // 40)
                 if now >= room.ends_at:
                     end_stage(room, now)
                 else:
@@ -614,7 +656,7 @@ async def ws_session(r, w, headers):
 
 
 PAGES = {"/": "index.html", "/index.html": "index.html", "/admin": "admin.html",
-         "/render.js": "render.js", "/painted.js": "painted.js"}
+         "/painted.js": "painted.js"}
 TYPES = {".html": b"text/html; charset=utf-8", ".js": b"application/javascript; charset=utf-8"}
 
 

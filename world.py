@@ -27,12 +27,12 @@ OPAQUE = (WALL, PROP, SHRINE)          # blocks sight; water does not
 DIRS = ((0, -1), (1, 0), (0, 1), (-1, 0))
 
 LEVELS = [
-    {"name": "The Forest", "cells": 41, "plazas": 14, "rivers": 1, "props": 0.030,
-     "shrines": 5, "docks": 3, "thicket": 0.72},
-    {"name": "The Ruins",  "cells": 29, "plazas": 10, "rivers": 1, "props": 0.038,
-     "shrines": 6, "docks": 2, "thicket": 0.66},
-    {"name": "The Temple", "cells": 21, "plazas": 8,  "rivers": 0, "props": 0.045,
-     "shrines": 4, "docks": 0, "thicket": 0.60},
+    {"name": "The Forest", "cells": 41, "plazas": 16, "rivers": 2, "ponds": 5, "props": 0.055,
+     "shrines": 8, "docks": 5, "thicket": 0.72},
+    {"name": "The Ruins",  "cells": 29, "plazas": 12, "rivers": 2, "ponds": 4, "props": 0.062,
+     "shrines": 7, "docks": 4, "thicket": 0.66},
+    {"name": "The Temple", "cells": 21, "plazas": 9,  "rivers": 1, "ponds": 3, "props": 0.070,
+     "shrines": 5, "docks": 2, "thicket": 0.60},
 ]
 
 
@@ -53,6 +53,7 @@ class World:
         self.river_path = []
         for _ in range(spec["rivers"]):
             self._river(rnd)
+        self._ponds(rnd, spec.get("ponds", 0), centres)
         self.goal = self._sanctum(rnd)
         self.docks = self._docks(rnd, spec["docks"])
         self.shrines = self._landmarks(rnd, centres, spec["shrines"])
@@ -198,7 +199,7 @@ class World:
         self.river_path.append((vertical, width, path))
 
         # bridges at regular intervals, with the banks cleared so they connect
-        steps = max(4, len(path) // 9)
+        steps = max(3, len(path) // 14)
         for idx in range(steps // 2, len(path), steps):
             pos_i, i = path[idx]
             for k in range(-2, width + 3):
@@ -212,6 +213,35 @@ class World:
                 x, y = (pos_i + width // 2, i + side) if vertical else (i + side, pos_i + width // 2)
                 if self.inside(x, y, 2) and self.g[y * w + x] == WALL:
                     self.g[y * w + x] = GROUND
+
+    def _ponds(self, rnd, count, centres):
+        """Ornamental pools, with a plank walk across the wider ones."""
+        w = self.w
+        for _ in range(count):
+            for _try in range(40):
+                cx = rnd.randrange(6, self.w - 6)
+                cy = rnd.randrange(6, self.h - 6)
+                if any(abs(cx - px) + abs(cy - py) < 7 for px, py in centres):
+                    continue
+                rx, ry = rnd.randint(2, 4), rnd.randint(2, 3)
+                ok = True
+                for yy in range(cy - ry - 1, cy + ry + 2):
+                    for xx in range(cx - rx - 1, cx + rx + 2):
+                        if not self.inside(xx, yy, 3):
+                            ok = False
+                if not ok:
+                    continue
+                for yy in range(cy - ry, cy + ry + 1):
+                    for xx in range(cx - rx, cx + rx + 1):
+                        # an ellipse, so pools are not square
+                        if ((xx - cx) / rx) ** 2 + ((yy - cy) / ry) ** 2 <= 1.0:
+                            self.g[yy * w + xx] = WATER
+                # a walk across, so a pool never seals a route
+                for xx in range(cx - rx - 1, cx + rx + 2):
+                    t = cy * w + xx
+                    if self.inside(xx, cy, 2):
+                        self.g[t] = BRIDGE if self.g[t] == WATER else self.g[t]
+                break
 
     # --------------------------------------------------- 5. the inner sanctum
     def _sanctum(self, rnd):
@@ -245,11 +275,11 @@ class World:
             if len(docks) >= pairs:
                 break
             ax, ay = a % w, a // w
-            if any(abs(ax - ux) + abs(ay - uy) < 10 for ux, uy in used):
+            if any(abs(ax - ux) + abs(ay - uy) < 8 for ux, uy in used):
                 continue
             far = [b for b in banks
-                   if abs(b % w - ax) + abs(b // w - ay) > w * 0.7
-                   and all(abs(b % w - ux) + abs(b // w - uy) >= 10 for ux, uy in used)]
+                   if abs(b % w - ax) + abs(b // w - ay) > w * 0.55
+                   and all(abs(b % w - ux) + abs(b // w - uy) >= 8 for ux, uy in used)]
             if not far:
                 continue
             b = rnd.choice(far)
@@ -284,7 +314,7 @@ class World:
                 continue
             open_ring = sum(1 for o in (-1, 1, -w, w, -w - 1, -w + 1, w - 1, w + 1)
                             if g[t + o] in WALKABLE)
-            if open_ring >= 7:                 # deep inside an open space
+            if open_ring >= 6:                 # in an open space, not a corridor
                 g[t] = PROP
 
     # ----------------------------------------------------- 9. seal the strays

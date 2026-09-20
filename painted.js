@@ -114,7 +114,7 @@ const PAINT = (() => {
         const hx = h2(x * 5 + i, y, 41), hy = h2(x, y * 5 + i, 43);
         c.fillRect(sx + hx * T * .86, sy + hy * T * .86, Math.max(1, T * .07), Math.max(1, T * .14));
       }
-      if (n2 > .88) {
+      if (n2 > .94) {
         c.fillStyle = P.blossom[(n * 4) | 0];
         c.beginPath(); c.arc(sx + n * T * .7 + T * .15, sy + n2 * T * .7, Math.max(1, T * .07), 0, TAU); c.fill();
       }
@@ -224,6 +224,16 @@ const PAINT = (() => {
     c.fillStyle = g2;
     roundRect(c, sx, top, T + 1, T + 1, T * .22); c.fill();
     if (T < 13) return;
+    const variety = h2(x, y, 301);
+    if (variety > .88) {                       // clipped topiary along the top of the hedge
+      for (let i = 0; i < 2; i++) {
+        const bx = sx + T * (.3 + i * .4), by = top + T * .34;
+        const g3 = c.createRadialGradient(bx - T * .06, by - T * .08, T * .02, bx, by, T * .2);
+        g3.addColorStop(0, P.hedgeRim); g3.addColorStop(1, P.hedgeDark);
+        c.fillStyle = g3;
+        c.beginPath(); c.arc(bx, by, T * .19, 0, TAU); c.fill();
+      }
+    }
     // leaf clumps, lit from the upper left
     for (let i = 0; i < 5; i++) {
       const hx = h2(x * 9 + i, y, 17), hy = h2(x, y * 9 + i, 19);
@@ -237,7 +247,7 @@ const PAINT = (() => {
     c.strokeStyle = 'rgba(200,245,150,.34)'; c.lineWidth = Math.max(1, T * .05);
     c.beginPath(); c.moveTo(sx + T * .1, top + T * .07); c.lineTo(sx + T * .9, top + T * .07); c.stroke();
     // blossoms
-    if (n > .62) {
+    if (n > .48) {
       const cols = P.blossom, k = (h2(x, y, 29) * cols.length) | 0;
       for (let i = 0; i < 3; i++) {
         const hx = h2(x * 3 + i, y * 5, 37), hy = h2(x * 5, y * 3 + i, 39);
@@ -251,6 +261,177 @@ const PAINT = (() => {
         c.fillStyle = '#fbe38a';
         c.beginPath(); c.arc(bx, by, br * .8, 0, TAU); c.fill();
       }
+    }
+  }
+
+
+  /** a five-petal bloom, used all over the garden */
+  function bloom(c, x, y, r, col, centre) {
+    c.fillStyle = col;
+    for (let p = 0; p < 5; p++) {
+      const a = p / 5 * TAU;
+      c.beginPath(); c.arc(x + Math.cos(a) * r * 1.12, y + Math.sin(a) * r * 1.12, r, 0, TAU); c.fill();
+    }
+    c.fillStyle = centre || '#fbe38a';
+    c.beginPath(); c.arc(x, y, r * .82, 0, TAU); c.fill();
+  }
+
+  /** small dressing on open ground: flower beds, bushes, lamps, benches, urns */
+  function paintScatter(c, x, y, sx, sy, T, P, grid, W, H, level) {
+    if (T < 15) return;
+    const pick = h2(x, y, 101);
+    if (pick > .13) return;                       // most ground stays clear
+    const jx = h2(x, y, 103), jy = h2(x, y, 107);
+    const cx = sx + T * (.22 + jx * .56), cy = sy + T * (.34 + jy * .44);
+    const kind = (h2(x, y, 109) * 100) | 0;
+
+    if (kind < 34) {                              // a bed of blooms
+      const cols = P.blossom, base = (h2(x, y, 113) * cols.length) | 0;
+      const n = 2 + ((h2(x, y, 127) * 3) | 0);
+      c.fillStyle = 'rgba(30,60,30,.18)';
+      c.beginPath(); c.ellipse(cx, cy + T * .09, T * .2, T * .07, 0, 0, TAU); c.fill();
+      for (let i = 0; i < n; i++) {
+        const a = i / n * TAU + jx * 3;
+        const bx = cx + Math.cos(a) * T * .13, by = cy + Math.sin(a) * T * .085;
+        c.strokeStyle = '#3f8f43'; c.lineWidth = Math.max(1, T * .028);
+        c.beginPath(); c.moveTo(bx, by + T * .09); c.lineTo(bx, by); c.stroke();
+        bloom(c, bx, by, T * .042, cols[(base + i) % cols.length]);
+      }
+    } else if (kind < 56) {                       // a low bush
+      c.fillStyle = 'rgba(28,56,28,.24)';
+      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .21, T * .08, 0, 0, TAU); c.fill();
+      for (let i = 0; i < 3; i++) {
+        const a = -0.6 + i * 0.6, r = T * (.13 - i * .012);
+        const g = c.createRadialGradient(cx + Math.cos(a) * T * .1 - r * .3, cy - r * .4, r * .1,
+                                          cx + Math.cos(a) * T * .1, cy, r);
+        g.addColorStop(0, P.canopy[2]); g.addColorStop(1, P.canopy[0]);
+        c.fillStyle = g;
+        c.beginPath(); c.arc(cx + Math.cos(a) * T * .1, cy - Math.abs(Math.sin(a)) * T * .04, r, 0, TAU); c.fill();
+      }
+      if (h2(x, y, 131) > .6) bloom(c, cx + T * .06, cy - T * .07, T * .04, P.blossom[0]);
+    } else if (kind < 70) {                       // tuft of tall grass or reeds
+      const near = (grid[y * W + x - 1] === WATER) || (grid[y * W + x + 1] === WATER) ||
+                   (grid[(y - 1) * W + x] === WATER) || (grid[(y + 1) * W + x] === WATER);
+      c.strokeStyle = near ? '#5f9a52' : P.canopy[1];
+      c.lineWidth = Math.max(1, T * .035);
+      for (let i = 0; i < 6; i++) {
+        const bx = cx + (i - 3) * T * .035, lean = (h2(x + i, y, 137) - .5) * T * .1;
+        c.beginPath(); c.moveTo(bx, cy + T * .1);
+        c.quadraticCurveTo(bx + lean * .5, cy - T * .02, bx + lean, cy - T * .18); c.stroke();
+      }
+    } else if (kind < 82) {                       // a lamp post
+      c.fillStyle = 'rgba(24,40,28,.26)';
+      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .1, T * .04, 0, 0, TAU); c.fill();
+      c.fillStyle = '#3b4148';
+      c.fillRect(cx - T * .022, cy - T * .3, T * .044, T * .4);
+      c.fillStyle = '#2f353b';
+      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .07, T * .028, 0, 0, TAU); c.fill();
+      const gl = c.createRadialGradient(cx, cy - T * .34, 0, cx, cy - T * .34, T * .34);
+      gl.addColorStop(0, 'rgba(255,226,150,.55)'); gl.addColorStop(1, 'rgba(255,226,150,0)');
+      c.fillStyle = gl; c.beginPath(); c.arc(cx, cy - T * .34, T * .34, 0, TAU); c.fill();
+      c.fillStyle = '#ffe9a8';
+      c.beginPath(); c.arc(cx, cy - T * .34, T * .06, 0, TAU); c.fill();
+    } else if (kind < 92) {                       // a stone urn
+      c.fillStyle = 'rgba(24,40,28,.26)';
+      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .12, T * .045, 0, 0, TAU); c.fill();
+      const g = c.createLinearGradient(cx - T * .1, cy, cx + T * .1, cy);
+      g.addColorStop(0, P.stone[1]); g.addColorStop(1, P.stone[0]);
+      c.fillStyle = g;
+      c.beginPath();
+      c.moveTo(cx - T * .075, cy - T * .12); c.quadraticCurveTo(cx - T * .13, cy, cx - T * .06, cy + T * .1);
+      c.lineTo(cx + T * .06, cy + T * .1); c.quadraticCurveTo(cx + T * .13, cy, cx + T * .075, cy - T * .12);
+      c.closePath(); c.fill();
+      c.fillStyle = P.stone[1];
+      c.beginPath(); c.ellipse(cx, cy - T * .12, T * .09, T * .035, 0, 0, TAU); c.fill();
+      bloom(c, cx, cy - T * .17, T * .04, P.blossom[1]);
+    } else {                                      // a bench beside the path
+      c.fillStyle = 'rgba(24,40,28,.24)';
+      c.beginPath(); c.ellipse(cx, cy + T * .09, T * .16, T * .05, 0, 0, TAU); c.fill();
+      c.fillStyle = '#8a6a42';
+      c.fillRect(cx - T * .15, cy - T * .02, T * .3, T * .05);
+      c.fillStyle = '#6d5133';
+      c.fillRect(cx - T * .15, cy - T * .12, T * .3, T * .04);
+      c.fillRect(cx - T * .13, cy + T * .03, T * .025, T * .06);
+      c.fillRect(cx + T * .105, cy + T * .03, T * .025, T * .06);
+    }
+  }
+
+  /** the blocking scenery tiles: broadleaf, cypress, blossom tree or statue */
+  function paintProp(c, x, y, sx, sy, T, D, P, level) {
+    const kind = (h2(x, y, 211) * 100) | 0;
+    const cx = sx + T * .5, base = sy + T * .78;
+    c.fillStyle = 'rgba(20,42,24,.34)';
+    c.beginPath(); c.ellipse(cx, base + T * .1, T * .5, T * .2, 0, 0, TAU); c.fill();
+
+    if (kind < 22 && level !== 2) {               // cypress / poplar
+      c.fillStyle = P.trunk;
+      c.fillRect(cx - T * .05, base - T * .2, T * .1, T * .3);
+      const g = c.createLinearGradient(cx - T * .3, base - T * 1.3, cx + T * .3, base);
+      g.addColorStop(0, P.canopy[2]); g.addColorStop(.5, P.canopy[1]); g.addColorStop(1, P.canopy[0]);
+      c.fillStyle = g;
+      c.beginPath();
+      c.moveTo(cx, base - T * 1.45);
+      c.quadraticCurveTo(cx + T * .34, base - T * .6, cx + T * .16, base - T * .16);
+      c.lineTo(cx - T * .16, base - T * .16);
+      c.quadraticCurveTo(cx - T * .34, base - T * .6, cx, base - T * 1.45);
+      c.fill();
+      c.fillStyle = 'rgba(190,240,150,.22)';
+      c.beginPath(); c.ellipse(cx - T * .08, base - T * .8, T * .07, T * .3, .1, 0, TAU); c.fill();
+      return;
+    }
+    if (kind < 34 && level !== 2) {               // blossom tree
+      c.fillStyle = P.trunk;
+      c.fillRect(cx - T * .07, base - T * .5, T * .14, T * .6);
+      const tiers = [[0, -T * 1.0, T * .5], [-T * .28, -T * .74, T * .38], [T * .28, -T * .72, T * .36]];
+      for (let i = tiers.length - 1; i >= 0; i--) {
+        const [dx, dy, r] = tiers[i];
+        const g = c.createRadialGradient(cx + dx - r * .35, base + dy - r * .4, r * .1, cx + dx, base + dy, r);
+        g.addColorStop(0, '#ffd9ea'); g.addColorStop(.55, '#f4a8c8'); g.addColorStop(1, '#d4789f');
+        c.fillStyle = g;
+        c.beginPath(); c.arc(cx + dx, base + dy, r, 0, TAU); c.fill();
+      }
+      for (let i = 0; i < 5; i++) {
+        const hx = h2(x * 7 + i, y, 221), hy = h2(x, y * 7 + i, 223);
+        c.fillStyle = 'rgba(255,255,255,.5)';
+        c.beginPath(); c.arc(cx + (hx - .5) * T * .8, base - T * .9 + (hy - .5) * T * .6, T * .05, 0, TAU); c.fill();
+      }
+      return;
+    }
+    if (kind < 44 || level === 2) {               // statue on a plinth
+      c.fillStyle = P.stone[0];
+      roundRect(c, cx - T * .28, base - T * .22, T * .56, T * .32, T * .05); c.fill();
+      const g = c.createLinearGradient(cx - T * .2, base - T * 1.1, cx + T * .2, base - T * .2);
+      g.addColorStop(0, P.stone[1]); g.addColorStop(1, P.stone[0]);
+      c.fillStyle = g;
+      c.beginPath();
+      c.moveTo(cx - T * .16, base - T * .22); c.lineTo(cx - T * .1, base - T * .78);
+      c.lineTo(cx + T * .1, base - T * .78); c.lineTo(cx + T * .16, base - T * .22);
+      c.closePath(); c.fill();
+      c.fillStyle = P.stone[1];
+      c.beginPath(); c.arc(cx, base - T * .88, T * .12, 0, TAU); c.fill();
+      c.fillStyle = 'rgba(120,170,110,.3)';                       // moss
+      c.beginPath(); c.ellipse(cx - T * .09, base - T * .3, T * .07, T * .04, 0, 0, TAU); c.fill();
+      return;
+    }
+    // broadleaf tree, the common one
+    c.fillStyle = P.trunk;
+    c.fillRect(cx - T * .08, base - T * .5, T * .16, T * .6);
+    c.fillStyle = 'rgba(0,0,0,.18)';
+    c.fillRect(cx + T * .02, base - T * .5, T * .06, T * .6);
+    const tiers = [[0, -T * 1.0, T * .56], [-T * .3, -T * .72, T * .42], [T * .3, -T * .7, T * .4]];
+    for (let i = tiers.length - 1; i >= 0; i--) {
+      const [dx, dy, r] = tiers[i];
+      const g = c.createRadialGradient(cx + dx - r * .35, base + dy - r * .4, r * .1, cx + dx, base + dy, r);
+      g.addColorStop(0, P.canopy[2]); g.addColorStop(.5, P.canopy[1]); g.addColorStop(1, P.canopy[0]);
+      c.fillStyle = g;
+      c.beginPath(); c.arc(cx + dx, base + dy, r, 0, TAU); c.fill();
+    }
+    for (let i = 0; i < 6; i++) {
+      const hx = h2(x * 11 + i, y, 61), hy = h2(x, y * 11 + i, 63);
+      c.fillStyle = 'rgba(190,240,150,.32)';
+      c.beginPath();
+      c.arc(cx + (hx - .5) * T * .9, base - T * .9 + (hy - .5) * T * .7, T * .07, 0, TAU);
+      c.fill();
     }
   }
 
@@ -326,13 +507,16 @@ const PAINT = (() => {
   }
 
   // -------------------------------------------------------------- objects
-  function paintChest(c, sx, sy, T, t, seed) {
+  function paintChest(c, sx, sy, T, t, seed, bonus) {
+    const K = bonus ? 1.3 : 1;
     const cx = sx + T * .5, base = sy + T * .72;
+    T = T * K;
     const bob = Math.sin(t * 2 + seed) * T * .03;
     const pul = .5 + .5 * Math.sin(t * 2.4 + seed);
-    const gl = c.createRadialGradient(cx, base - T * .2, 0, cx, base - T * .2, T * 1.25);
-    gl.addColorStop(0, 'rgba(255,205,90,' + (.36 + .16 * pul) + ')');
-    gl.addColorStop(1, 'rgba(255,205,90,0)');
+    const gl = c.createRadialGradient(cx, base - T * .2, 0, cx, base - T * .2, T * (bonus ? 1.7 : 1.25));
+    gl.addColorStop(0, bonus ? 'rgba(190,150,255,' + (.5 + .2 * pul) + ')'
+                             : 'rgba(255,205,90,' + (.36 + .16 * pul) + ')');
+    gl.addColorStop(1, bonus ? 'rgba(190,150,255,0)' : 'rgba(255,205,90,0)');
     c.fillStyle = gl; c.beginPath(); c.arc(cx, base - T * .2, T * 1.25, 0, TAU); c.fill();
 
     c.fillStyle = 'rgba(30,28,14,.34)';
@@ -345,7 +529,8 @@ const PAINT = (() => {
     roundRect(c, cx - T * .3, y0 + T * .1, T * .6, T * .3, T * .05); c.fill();
     // domed lid
     const g2 = c.createLinearGradient(cx - T * .3, y0, cx + T * .3, y0 + T * .16);
-    g2.addColorStop(0, '#f2cd6a'); g2.addColorStop(1, '#c08a2a');
+    if (bonus) { g2.addColorStop(0, '#e6d2ff'); g2.addColorStop(1, '#9a72d8'); }
+    else { g2.addColorStop(0, '#f2cd6a'); g2.addColorStop(1, '#c08a2a'); }
     c.fillStyle = g2;
     c.beginPath(); c.ellipse(cx, y0 + T * .1, T * .3, T * .16, 0, Math.PI, 0); c.fill();
     c.fillStyle = '#6b4711';
@@ -479,7 +664,7 @@ const PAINT = (() => {
     c.textAlign = 'start'; c.textBaseline = 'alphabetic';
   }
 
-  return { PALS, paintGround, paintWater, paintHedge, paintTree, paintShrine,
+  return { PALS, paintGround, paintWater, paintHedge, paintTree, paintProp, paintScatter, bloom, paintShrine,
            paintChest, paintIdol, paintBoat, paintPerson, paintPlate, roundRect, h2,
            GROUND, WALL, WATER, BRIDGE, DOCK, PROP, SHRINE };
 })();

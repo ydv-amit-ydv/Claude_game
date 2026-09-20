@@ -208,7 +208,6 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
   <ol id="champList"></ol>
 </div></div>
 
-<script src="render.js"></script>
 <script src="painted.js"></script>
 <script>
 'use strict';
@@ -229,7 +228,7 @@ let cw = 0, ch = 0, dpr = 1;
 let W = 0, H = 0, grid = null, goal = 0, gx = 0, gy = 0, level = 0, stage = null;
 let chests = new Map(), others = new Map(), docks = [], boats = [];
 let me = { id: 0 }, px = 0, py = 0, seq = 0, lastMove = 0, facing = 2;
-let gold = 0, finished = false, phase = 'lobby', joined = false, name = '', MI = 110;
+let gold = 0, banked = false, finished = false, phase = 'lobby', joined = false, name = '', MI = 110;
 let mode = 'create', delay = 30, roomCode = '', joinCode = '';
 let view = 0;                      // 0 = first person, 1 = over the shoulder, 2 = whole map
 const held = [], pops = [];
@@ -237,7 +236,8 @@ let goldFlash = 0, badFlash = 0, boatFlash = 0;
 let miniLayer = null;
 
 // camera
-let camX = 0, camY = 0, yaw = Math.PI / 2, yawTarget = Math.PI / 2, lookOff = 0;
+let camX = 0, camY = 0;
+const chunks = new Map();          // painted tile cache, keyed by chunk
 
 // ---------- helpers
 function hash(x, y) {
@@ -268,402 +268,70 @@ function beep(f0, f1, d, type = 'sine', v = .06, delay = 0) {
   } catch (e) {}
 }
 
-// ================================================================ look & feel
-// All artwork is generated at level load by render.js - no files to fetch.
-const LOOKS = GFX.LOOKS;
-const TEX = GFX.TEX, TMASK = GFX.TMASK;
-let MAT = null, SKY = null, sprPerson = null, sprChest = null, sprIdol = null,
-    sprBoat = null, sprPlants = null, aoMap = null, tileOff = null;
-
-function buildArt(lv) {
-  MAT = GFX.makeMaterials(lv);
-  sprPerson = [0, 1, 2, 3].map(f => GFX.makePerson(lv, f));
-  sprChest = GFX.makeChest();
-  sprIdol = GFX.makeIdol();
-  sprBoat = GFX.makeBoat();
-  sprPlants = GFX.makePlants(lv);
-  buildSkyPano();
-}
-
-function buildSkyPano() {
-  if (!RH) return;
-  SKY = GFX.buildSky(level, 512, Math.max(8, RH >> 1));
-}
-
-/** which sides of each walkable tile touch something solid, plus a per-tile
- *  texture offset so repeated ground and walls never show an obvious grid */
-function buildAO() {
-  aoMap = new Uint8Array(W * H);
-  tileOff = new Uint8Array(W * H);
-  for (let i = 0; i < W * H; i++) {
-    const x = i % W, y = (i / W) | 0;
-    tileOff[i] = ((GFX.h2(x, y, 5) * 16) | 0) | (((GFX.h2(x, y, 6) * 16) | 0) << 4);
-  }
-  for (let y = 1; y < H - 1; y++) {
-    for (let x = 1; x < W - 1; x++) {
-      const i = y * W + x;
-      if (opaque(grid[i])) continue;
-      let m = 0;
-      if (opaque(grid[i - W])) m |= 1;
-      if (opaque(grid[i + 1])) m |= 2;
-      if (opaque(grid[i + W])) m |= 4;
-      if (opaque(grid[i - 1])) m |= 8;
-      aoMap[i] = m;
-    }
-  }
-}
-
-// ================================================================ buffers
-let RW = 0, RH = 0, img = null, buf32 = null, zbuf = null, rbuf = null, rctx = null;
-let budget = 0, frameAvg = 16, lastResize = 0;
-
-function makeBuffers() {
-  const aspect = ch / cw;
-  RW = Math.max(140, Math.round(Math.sqrt(budget / aspect)));
-  RH = Math.max(100, Math.round(RW * aspect));
-  rbuf = document.createElement('canvas');
-  rbuf.width = RW; rbuf.height = RH;
-  rctx = rbuf.getContext('2d');
-  img = rctx.createImageData(RW, RH);
-  buf32 = new Uint32Array(img.data.buffer);
-  zbuf = new Float32Array(RW);
-  buildSkyPano();
-}
-
-/** keep the frame rate steady by trading resolution for speed */
-function autoQuality(now, dt) {
-  frameAvg = frameAvg * 0.92 + dt * 1000 * 0.08;
-  if (now - lastResize < 2500) return;
-  const lo = 45000, hi = matchMedia('(pointer:coarse)').matches ? 190000 : 420000;
-  let next = budget;
-  if (frameAvg > 30 && budget > lo) next = Math.max(lo, budget * 0.72);
-  else if (frameAvg < 15 && budget < hi) next = Math.min(hi, budget * 1.28);
-  if (Math.abs(next - budget) / budget > 0.08) {
-    budget = next; lastResize = now; makeBuffers();
-  }
-}
-
+// ================================================================ canvas sizing
 function resize() {
   dpr = Math.min(2, devicePixelRatio || 1);
   cw = innerWidth; ch = innerHeight;
   cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
-  const m = Math.round(Math.min(148, Math.max(90, Math.min(cw, ch) * 0.25)));
+  const m = Math.round(Math.min(160, Math.max(96, Math.min(cw, ch) * 0.26)));
   mc.width = m * dpr; mc.height = m * dpr; mc.style.width = m + 'px'; mc.style.height = m + 'px';
-  if (!budget) budget = matchMedia('(pointer:coarse)').matches ? 105000 : 210000;
-  makeBuffers();
+  chunks.clear();
 }
 addEventListener('resize', resize); resize();
 
-// ================================================================ first person
-const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+// ================================================================ painted garden view
+// The static garden is painted into 8x8-tile chunks and cached. Walking into
+// a new chunk costs one 64-tile bake instead of repainting the whole screen,
+// and the cache is capped so memory stays bounded on a phone.
+const CHUNK = 8, CHUNK_CAP = 72;
+let chunkT = 0;
 
-function render3D(now) {
-  const L = LOOKS[level], horizon = RH >> 1;
-  const fog = L.fog, fogR = fog[0], fogG = fog[1], fogB = fog[2];
-  const dirX = Math.cos(yaw), dirY = Math.sin(yaw);
-  const fovS = 0.72;
-  const planeX = -dirY * fovS, planeY = dirX * fovS;
-  const t = now / 1000;
-  const g = grid, ao = aoMap;
-  const texGround = MAT.ground, texPlank = MAT.plank, wb = MAT.waterBase;
-  const skyD = SKY.d, skyW = SKY.w, skyH = SKY.h;
+function chunkKey(cx, cy) { return cx * 4096 + cy; }
 
-  // ---------------- sky, or a cast stone ceiling indoors
-  if (!L.indoor) {
-    const fov = 2 * Math.atan(fovS);
-    for (let x = 0; x < RW; x++) {
-      const ang = yaw + (x / RW - 0.5) * fov;
-      let u = (ang / (Math.PI * 2)) % 1; if (u < 0) u += 1;
-      const su = (u * skyW) | 0;
-      for (let y = 0; y < horizon; y++) {
-        const sy = (y * skyH / horizon) | 0;
-        buf32[y * RW + x] = skyD[sy * skyW + su];
-      }
-    }
-  } else {
-    const texCeil = MAT.ceil || MAT.ground, posZ = 0.5 * RH;
-    const rayX0 = dirX - planeX, rayY0 = dirY - planeY;
-    const rayX1 = dirX + planeX, rayY1 = dirY + planeY;
-    for (let y = 0; y < horizon; y += 2) {
-      const p = horizon - y + 1;
-      const rowDist = (posZ / p) * 1.15;
-      const stepX = rowDist * (rayX1 - rayX0) / RW, stepY = rowDist * (rayY1 - rayY0) / RW;
-      let fx = camX + rowDist * rayX0, fy = camY + rowDist * rayY0;
-      const fogF = clamp((rowDist - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
-      const lamp = clamp(1 - rowDist / 8, 0, 1) * L.lamp;
-      const row = y * RW;
-      for (let x = 0; x < RW; x++, fx += stepX, fy += stepY) {
-        const c = texCeil[(((fy - Math.floor(fy)) * TEX) | 0) * TEX + (((fx - Math.floor(fx)) * TEX) | 0)];
-        let r = (c & 255) * 0.72, gg = ((c >> 8) & 255) * 0.72, b = ((c >> 16) & 255) * 0.72;
-        if (lamp) { r += lamp * 96; gg += lamp * 66; b += lamp * 30; }
-        r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
-        const col = rgb(clamp(r, 0, 255) | 0, clamp(gg, 0, 255) | 0, clamp(b, 0, 255) | 0);
-        buf32[row + x] = col;
-        if (y + 1 < horizon) buf32[row + RW + x] = col;
-      }
-    }
-  }
-
-  // ---------------- ground, with contact shade and living water
-  const posZ = 0.5 * RH;
-  const rayX0 = dirX - planeX, rayY0 = dirY - planeY;
-  const rayX1 = dirX + planeX, rayY1 = dirY + planeY;
-  const skyHoriz = skyD[(skyH - 1) * skyW];
-  const skyR = skyHoriz & 255, skyG = (skyHoriz >> 8) & 255, skyB = (skyHoriz >> 16) & 255;
-  for (let y = horizon; y < RH; y += 2) {
-    const p = y - horizon + 1;
-    const rowDist = posZ / p;
-    const stepX = rowDist * (rayX1 - rayX0) / RW, stepY = rowDist * (rayY1 - rayY0) / RW;
-    let fx = camX + rowDist * rayX0, fy = camY + rowDist * rayY0;
-    const fogF = clamp((rowDist - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
-    const lamp = L.lamp ? clamp(1 - rowDist / 8, 0, 1) * L.lamp : 0;
-    const row = y * RW;
-    const near = rowDist < 9;
-    for (let x = 0; x < RW; x++, fx += stepX, fy += stepY) {
-      const tx = fx | 0, ty = fy | 0;
-      let r, gg, b;
-      if (tx < 0 || ty < 0 || tx >= W || ty >= H) { r = fogR; gg = fogG; b = fogB; }
-      else {
-        const fu = fx - tx, fv = fy - ty;
-        const k = g[ty * W + tx];
-        if (k === WATER) {
-          // two ripple trains, a sun glint, sky reflection, foam at the bank
-          const w1 = Math.sin(fx * 3.1 + t * 1.6) + Math.sin(fy * 2.3 - t * 1.1);
-          const w2 = Math.sin((fx + fy) * 1.7 - t * 2.3);
-          const wob = w1 * 0.5 + w2 * 0.5;
-          r = wb[0] + wob * 13; gg = wb[1] + wob * 17; b = wb[2] + wob * 21;
-          let s = wob * 0.5 + 0.5; s *= s; s *= s; s *= s;
-          r += s * 165; gg += s * 165; b += s * 140;
-          const refl = clamp(0.08 + rowDist * 0.022, 0, 0.34);
-          r += (skyR - r) * refl; gg += (skyG - gg) * refl; b += (skyB - b) * refl;
-          const m = ao[ty * W + tx];
-          if (near) {
-            let edge = 0;
-            const wat = (xx, yy) => (xx >= 0 && yy >= 0 && xx < W && yy < H && g[yy * W + xx] === WATER);
-            if (!wat(tx, ty - 1)) edge = Math.max(edge, 1 - fv);
-            if (!wat(tx + 1, ty)) edge = Math.max(edge, fu);
-            if (!wat(tx, ty + 1)) edge = Math.max(edge, fv);
-            if (!wat(tx - 1, ty)) edge = Math.max(edge, 1 - fu);
-            const foam = Math.pow(clamp(edge, 0, 1), 6) * (0.55 + 0.45 * Math.sin(t * 3 + fx + fy));
-            r += foam * 120; gg += foam * 130; b += foam * 120;
-          }
-        } else {
-          const tex = (k === BRIDGE || k === DOCK) ? texPlank : texGround;
-          const off = tileOff[ty * W + tx];
-          const u = (((fu * TEX) | 0) + (off & 15) * 8) & TMASK;
-          const v = (((fv * TEX) | 0) + (off >> 4) * 8) & TMASK;
-          const c = tex[v * TEX + u];
-          r = c & 255; gg = (c >> 8) & 255; b = (c >> 16) & 255;
-          if (near) {
-            const m = ao[ty * W + tx];
-            if (m) {
-              let occ = 0;
-              if (m & 1) occ = Math.max(occ, 1 - fv);
-              if (m & 2) occ = Math.max(occ, fu);
-              if (m & 4) occ = Math.max(occ, fv);
-              if (m & 8) occ = Math.max(occ, 1 - fu);
-              const sh = 1 - 0.5 * occ * occ * occ;
-              r *= sh; gg *= sh; b *= sh;
-            }
-          }
-        }
-        if (lamp) { r += lamp * 128; gg += lamp * 88; b += lamp * 38; }
-      }
-      r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
-      const dz = (BAYER[(y & 3) * 4 + (x & 3)] - 7.5) * 0.22;
-      const col = rgb(clamp(r + dz, 0, 255) | 0, clamp(gg + dz, 0, 255) | 0, clamp(b + dz, 0, 255) | 0);
-      buf32[row + x] = col;
-      if (y + 1 < RH) buf32[row + RW + x] = col;
-    }
-  }
-
-  // ---------------- walls
-  for (let x = 0; x < RW; x++) {
-    const camXn = 2 * x / RW - 1;
-    const rdX = dirX + planeX * camXn, rdY = dirY + planeY * camXn;
-    let mapX = camX | 0, mapY = camY | 0;
-    const dDistX = Math.abs(1 / (rdX || 1e-9)), dDistY = Math.abs(1 / (rdY || 1e-9));
-    let stepX, stepY, sideDistX, sideDistY;
-    if (rdX < 0) { stepX = -1; sideDistX = (camX - mapX) * dDistX; }
-    else { stepX = 1; sideDistX = (mapX + 1 - camX) * dDistX; }
-    if (rdY < 0) { stepY = -1; sideDistY = (camY - mapY) * dDistY; }
-    else { stepY = 1; sideDistY = (mapY + 1 - camY) * dDistY; }
-
-    let side = 0, hitKind = 0, guard = 0;
-    while (guard++ < 200) {
-      if (sideDistX < sideDistY) { sideDistX += dDistX; mapX += stepX; side = 0; }
-      else { sideDistY += dDistY; mapY += stepY; side = 1; }
-      if (mapX < 0 || mapY < 0 || mapX >= W || mapY >= H) { hitKind = WALL; break; }
-      const k = g[mapY * W + mapX];
-      if (opaque(k)) { hitKind = k; break; }
-    }
-    let dist = side === 0 ? (sideDistX - dDistX) : (sideDistY - dDistY);
-    if (dist < 0.02) dist = 0.02;
-    zbuf[x] = dist;
-
-    const lineH = (RH / dist) | 0;
-    const y0 = horizon - (lineH >> 1), y1 = horizon + (lineH >> 1);
-    const drawStart = Math.max(0, y0), drawEnd = Math.min(RH - 1, y1);
-    if (drawEnd < drawStart) continue;
-
-    let wallX = side === 0 ? camY + dist * rdY : camX + dist * rdX;
-    wallX -= Math.floor(wallX);
-    let texX = (wallX * TEX) | 0;
-    if ((side === 0 && rdX > 0) || (side === 1 && rdY < 0)) texX = TEX - texX - 1;
-    const woff = (mapX >= 0 && mapY >= 0 && mapX < W && mapY < H) ? tileOff[mapY * W + mapX] : 0;
-    texX = (texX + (woff & 15) * 8) & TMASK;
-    const wyoff = (woff >> 4) * 8;
-
-    const tex = hitKind === PROP ? MAT.prop : hitKind === SHRINE ? MAT.shrine : MAT.wall;
-    const shade = (side === 1 ? 0.84 : 1) * L.ambient;
-    const fogF = clamp((dist - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
-    const lamp = L.lamp ? clamp(1 - dist / 8, 0, 1) * L.lamp : 0;
-    const step = TEX / lineH;
-    let texPos = (drawStart - horizon + (lineH >> 1)) * step;
-    const colBase = texX * 1;
-
-    for (let y = drawStart; y <= drawEnd; y++) {
-      const texY = ((texPos | 0) + wyoff) & TMASK;
-      texPos += step;
-      const c = tex[texY * TEX + colBase];
-      let r = (c & 255) * shade, gg = ((c >> 8) & 255) * shade, b = ((c >> 16) & 255) * shade;
-      if (lamp) { r += lamp * 136; gg += lamp * 94; b += lamp * 42; }
-      r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
-      const dz = (BAYER[(y & 3) * 4 + (x & 3)] - 7.5) * 0.22;
-      buf32[y * RW + x] = rgb(clamp(r + dz, 0, 255) | 0, clamp(gg + dz, 0, 255) | 0, clamp(b + dz, 0, 255) | 0);
-    }
-  }
-
-  // ---------------- things standing in the world
-  const list = [];
-  const walkPhase = (o) => sprPerson[((now / 140 + o.x * 3 + o.y * 5) | 0) & 3];
-  for (const o of others.values()) {
-    const moving = Math.abs(o.x - o.dx) + Math.abs(o.y - o.dy) > 0.02;
-    list.push({ s: moving ? walkPhase(o) : sprPerson[0], x: o.dx + .5, y: o.dy + .5, sc: 0.86 });
-  }
-  for (const c of chests.values()) list.push({ s: sprChest, x: c.x + .5, y: c.y + .5, sc: .42 });
-  for (const b of boats) list.push({ s: sprBoat, x: b.x + .5, y: b.y + .5, sc: .5 });
-  list.push({ s: sprIdol, x: gx + .5, y: gy + .5, sc: 1.45 });
-
-  // plants, placed by tile hash so they never need sending over the wire
-  const reeds = sprPlants[sprPlants.length - 2], lily = sprPlants[sprPlants.length - 1];
-  const nKinds = sprPlants.length - 2;
-  const cx0 = Math.max(1, (camX - 13) | 0), cx1 = Math.min(W - 2, (camX + 13) | 0);
-  const cy0 = Math.max(1, (camY - 13) | 0), cy1 = Math.min(H - 2, (camY + 13) | 0);
-  for (let ty = cy0; ty <= cy1; ty++) {
-    for (let tx = cx0; tx <= cx1; tx++) {
-      const k = g[ty * W + tx];
-      const hh = GFX.h2(tx, ty, 999);
-      if (k === WATER) {
-        if (hh > 0.88) list.push({ s: lily, x: tx + .2 + hh * .6, y: ty + .3 + hh * .4, sc: .2 });
-        continue;
-      }
-      if (k !== GROUND || hh > 0.34) continue;
-      const m = aoMap[ty * W + tx];
-      const nearWater = (g[ty * W + tx - 1] === WATER) || (g[ty * W + tx + 1] === WATER) ||
-                        (g[(ty - 1) * W + tx] === WATER) || (g[(ty + 1) * W + tx] === WATER);
-      if (!m && !nearWater) continue;                       // only dress edges, not open ground
-      const sp = nearWater ? reeds : sprPlants[(hh * 997 | 0) % nKinds];
-      const jx = GFX.h2(tx, ty, 41), jy = GFX.h2(tx, ty, 67);
-      list.push({ s: sp, x: tx + .2 + jx * .6, y: ty + .2 + jy * .6,
-                  sc: nearWater ? .34 : .22 + jx * .12,
-                  sway: Math.sin(t * 1.6 + tx * .7 + ty * .4) * 0.012 });
-    }
-  }
-
-  for (const sp of list) { sp.rx = sp.x - camX; sp.ry = sp.y - camY; sp.d2 = sp.rx * sp.rx + sp.ry * sp.ry; }
-  list.sort((a, b) => b.d2 - a.d2);
-
-  const invDet = 1 / (planeX * dirY - dirX * planeY);
-  for (const sp of list) {
-    if (sp.d2 > 340) continue;
-    const rx = sp.rx + (sp.sway || 0), ry = sp.ry;
-    const trX = invDet * (dirY * rx - dirX * ry);
-    const trY = invDet * (-planeY * rx + planeX * ry);
-    if (trY < 0.3) continue;
-    const scrX = ((RW / 2) * (1 + trX / trY)) | 0;
-    const sh = Math.abs((RH / trY) * sp.sc) | 0, sw = (sh * sp.s.w / sp.s.h) | 0;
-    if (sh < 2 || sw < 1) continue;
-    const lift = ((0.5 - sp.sc / 2) * RH / trY) | 0;
-    const y0 = horizon - (sh >> 1) + lift, x0 = scrX - (sw >> 1);
-    const fogF = clamp((trY - L.fogFrom) / (L.fogTo - L.fogFrom), 0, 1);
-    const lamp = L.lamp ? clamp(1 - trY / 8, 0, 1) * L.lamp : 0;
-    const sd = sp.s.d, sww = sp.s.w, shh = sp.s.h;
-    const xa = Math.max(0, x0), xb = Math.min(RW, x0 + sw);
-    const ya = Math.max(0, y0), yb = Math.min(RH, y0 + sh);
-    for (let x = xa; x < xb; x++) {
-      if (trY >= zbuf[x]) continue;
-      const tx = ((x - x0) * sww / sw) | 0;
-      for (let y = ya; y < yb; y++) {
-        const ty = ((y - y0) * shh / sh) | 0;
-        const c = sd[ty * sww + tx];
-        const a = c >>> 24;
-        if (!a) continue;
-        let r = c & 255, gg = (c >> 8) & 255, b = (c >> 16) & 255;
-        if (lamp) { r += lamp * 118; gg += lamp * 82; b += lamp * 36; }
-        r += (fogR - r) * fogF; gg += (fogG - gg) * fogF; b += (fogB - b) * fogF;
-        const o = y * RW + x;
-        if (a > 250) {
-          buf32[o] = rgb(clamp(r, 0, 255) | 0, clamp(gg, 0, 255) | 0, clamp(b, 0, 255) | 0);
-        } else {
-          const d = buf32[o], af = a / 255;
-          buf32[o] = rgb(clamp((d & 255) + (r - (d & 255)) * af, 0, 255) | 0,
-                         clamp(((d >> 8) & 255) + (gg - ((d >> 8) & 255)) * af, 0, 255) | 0,
-                         clamp(((d >> 16) & 255) + (b - ((d >> 16) & 255)) * af, 0, 255) | 0);
-        }
-      }
-    }
-  }
-
-  rctx.putImageData(img, 0, 0);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(rbuf, 0, 0, RW, RH, 0, 0, cw, ch);
-}
-
-// ================================================================ painted overhead view
-// The static garden (ground, water, hedges, trees, shrines) is painted once
-// into an offscreen layer and reused until the camera drifts past its margin;
-// only the moving pieces are drawn every frame.
-let baked = null, bakedAt = null, bakeT = 0;
-
-function bakeWorld(T) {
-  const marginTiles = 6;
-  const tilesX = Math.ceil(cw / T) + marginTiles * 2;
-  const tilesY = Math.ceil(ch / T) + marginTiles * 2;
-  const x0 = clamp(Math.round(camX) - (tilesX >> 1), 0, Math.max(0, W - tilesX));
-  const y0 = clamp(Math.round(camY) - (tilesY >> 1), 0, Math.max(0, H - tilesY));
-  const x1 = Math.min(W - 1, x0 + tilesX), y1 = Math.min(H - 1, y0 + tilesY);
-  const P = PAINT.PALS[level];
-
+function bakeChunk(cx, cy, T) {
+  const D = T * 0.46, pad = Math.ceil(D) + 3;
   const cvs = document.createElement('canvas');
-  const D = T * 0.42;
-  cvs.width = (x1 - x0 + 1) * T;
-  cvs.height = (y1 - y0 + 1) * T + Math.ceil(D) + 4;
+  cvs.width = CHUNK * T;
+  cvs.height = CHUNK * T + pad + Math.ceil(T * 0.3);
   const c = cvs.getContext('2d');
-  const padTop = Math.ceil(D) + 2;
-  const ox = -x0 * T, oy = -y0 * T + padTop;
+  const P = PAINT.PALS[level];
+  const x0 = cx * CHUNK, y0 = cy * CHUNK;
+  const x1 = Math.min(W - 1, x0 + CHUNK - 1), y1 = Math.min(H - 1, y0 + CHUNK - 1);
+  const ox = -x0 * T, oy = -y0 * T + pad;
 
-  // 1. the ground everywhere
   for (let y = y0; y <= y1; y++)
     for (let x = x0; x <= x1; x++)
       PAINT.paintGround(c, x, y, ox + x * T, oy + y * T, T, grid[y * W + x], P, level);
 
-  // 2. the water as connected bodies, so shores and lilies read properly
   PAINT.paintWater(c, grid, W, H, x0, x1, y0, y1, ox, oy, T, P, 0);
 
-  // 3. standing things, front rows last so they overlap correctly
+  // scatter: flowers, bushes, lamps, statues - dressing on open ground
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++)
+      if (grid[y * W + x] === GROUND)
+        PAINT.paintScatter(c, x, y, ox + x * T, oy + y * T, T, P, grid, W, H, level);
+
+  // standing things, front rows last so they overlap correctly
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const k = grid[y * W + x], sx = ox + x * T, sy = oy + y * T;
       if (k === WALL) PAINT.paintHedge(c, x, y, sx, sy, T, D, P, grid, W, H);
-      else if (k === PROP) PAINT.paintTree(c, x, y, sx, sy, T, D, P);
+      else if (k === PROP) PAINT.paintProp(c, x, y, sx, sy, T, D, P, level);
       else if (k === SHRINE) PAINT.paintShrine(c, x, y, sx, sy, T, D, P, 0);
     }
   }
-  baked = { cvs, x0, y0, x1, y1, T, ox, oy, padTop };
-  bakedAt = { x: Math.round(camX), y: Math.round(camY) };
-  bakeT = T;
+  return { cvs, pad, T };
+}
+
+function getChunk(cx, cy, T) {
+  if (chunkT !== T) { chunks.clear(); chunkT = T; }
+  const k = chunkKey(cx, cy);
+  let ch2 = chunks.get(k);
+  if (ch2) { chunks.delete(k); chunks.set(k, ch2); return ch2; }   // touch for LRU
+  ch2 = bakeChunk(cx, cy, T);
+  chunks.set(k, ch2);
+  while (chunks.size > CHUNK_CAP) chunks.delete(chunks.keys().next().value);
+  return ch2;
 }
 
 function drawTopDown(now, whole) {
@@ -676,12 +344,13 @@ function drawTopDown(now, whole) {
     T = Math.max(2, Math.min((cw - 20) / W, (ch - 150) / H));
     ox = (cw - W * T) / 2; oy = (ch - H * T) / 2 + 10;
   } else {
-    T = Math.max(26, Math.min(52, Math.round(Math.min(cw, ch) / 12)));
+    T = Math.max(26, Math.min(54, Math.round(Math.min(cw, ch) / 12)));
     ox = cw / 2 - camX * T; oy = ch / 2 - camY * T;
+    // never pan past the edge of the world - the camera stops at the boundary
+    ox = W * T > cw ? clamp(ox, cw - W * T, 0) : (cw - W * T) / 2;
+    oy = H * T > ch ? clamp(oy, ch - H * T, 0) : (ch - H * T) / 2;
   }
-  const D = T * 0.42;
 
-  // backdrop
   ctx.fillStyle = level === 2 ? '#17120c' : level === 1 ? '#3a3524' : '#22402a';
   ctx.fillRect(0, 0, cw, ch);
 
@@ -700,41 +369,45 @@ function drawTopDown(now, whole) {
       }
     }
   } else {
-    if (!baked || bakeT !== T || !bakedAt ||
-        Math.abs(bakedAt.x - camX) > 3 || Math.abs(bakedAt.y - camY) > 3) bakeWorld(T);
-    ctx.drawImage(baked.cvs, ox + baked.x0 * T, oy + baked.y0 * T - baked.padTop);
-
-    // water shimmer and shrine light have to move, so they go on top each frame
-    const x0 = Math.max(0, Math.floor(-ox / T)), x1 = Math.min(W - 1, Math.ceil((cw - ox) / T));
-    const y0 = Math.max(0, Math.floor(-oy / T)), y1 = Math.min(H - 1, Math.ceil((ch - oy) / T));
-    ctx.save(); ctx.globalCompositeOperation = 'lighter';
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0; x <= x1; x++) {
-        if (grid[y * W + x] !== SHRINE) continue;
-        const cx = ox + (x + .5) * T, cy = oy + (y + .6) * T;
-        const pul = .5 + .5 * Math.sin(t * 1.8 + x);
-        const gl = ctx.createRadialGradient(cx, cy, 0, cx, cy, T * 1.8);
-        gl.addColorStop(0, P.glow + (.20 + .12 * pul) + ')');
-        gl.addColorStop(1, P.glow + '0)');
-        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(cx, cy, T * 1.8, 0, 6.283); ctx.fill();
+    const cx0 = Math.max(0, Math.floor(-ox / T / CHUNK)), cx1 = Math.floor((cw - ox) / T / CHUNK);
+    const cy0 = Math.max(0, Math.floor(-oy / T / CHUNK)), cy1 = Math.floor((ch - oy) / T / CHUNK);
+    const maxCX = Math.ceil(W / CHUNK) - 1, maxCY = Math.ceil(H / CHUNK) - 1;
+    for (let cy = cy0; cy <= Math.min(maxCY, cy1); cy++) {
+      for (let cx = cx0; cx <= Math.min(maxCX, cx1); cx++) {
+        const ck = getChunk(cx, cy, T);
+        ctx.drawImage(ck.cvs, ox + cx * CHUNK * T, oy + cy * CHUNK * T - ck.pad);
       }
     }
-    ctx.restore();
   }
 
   const x0 = Math.max(0, Math.floor(-ox / T)), x1 = Math.min(W - 1, Math.ceil((cw - ox) / T));
   const y0 = Math.max(0, Math.floor(-oy / T)), y1 = Math.min(H - 1, Math.ceil((ch - oy) / T));
 
-  // the idol, always visible as a beacon
+  // live light from the shrines, over the baked chunks
+  if (!whole) {
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if (grid[y * W + x] !== SHRINE) continue;
+        const sx = ox + (x + .5) * T, sy = oy + (y + .6) * T;
+        const pul = .5 + .5 * Math.sin(t * 1.8 + x);
+        const gl = ctx.createRadialGradient(sx, sy, 0, sx, sy, T * 2);
+        gl.addColorStop(0, P.glow + (.20 + .12 * pul) + ')');
+        gl.addColorStop(1, P.glow + '0)');
+        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(sx, sy, T * 2, 0, 6.283); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  // the idol, always a beacon
   if (gx >= x0 - 3 && gx <= x1 + 3 && gy >= y0 - 3 && gy <= y1 + 3)
     PAINT.paintIdol(ctx, ox + gx * T, oy + gy * T, T, t);
 
-  // chests
   for (const c of chests.values()) {
     if (c.x < x0 - 1 || c.x > x1 + 1 || c.y < y0 - 1 || c.y > y1 + 1) continue;
-    PAINT.paintChest(ctx, ox + c.x * T, oy + c.y * T, T, t, c.x * 3 + c.y);
+    PAINT.paintChest(ctx, ox + c.x * T, oy + c.y * T, T, t, c.x * 3 + c.y, c.bonus);
   }
-  // ferries
   for (const b of boats) {
     if (b.x < x0 - 1 || b.x > x1 + 1 || b.y < y0 - 1 || b.y > y1 + 1) continue;
     PAINT.paintBoat(ctx, ox + b.x * T, oy + b.y * T, T, t, b.x + b.y);
@@ -748,20 +421,19 @@ function drawTopDown(now, whole) {
   figures.sort((a, b) => a.y - b.y);
   for (const f of figures) {
     if (f.x < x0 - 2 || f.x > x1 + 2 || f.y < y0 - 2 || f.y > y1 + 2) continue;
-    const cx = ox + (f.x + .5) * T, cy = oy + (f.y + .5) * T;
-    PAINT.paintPerson(ctx, cx, cy, T * 1.35, {
+    const sx = ox + (f.x + .5) * T, sy = oy + (f.y + .5) * T;
+    PAINT.paintPerson(ctx, sx, sy, T * 1.35, {
       me: f.me, t, moving: f.moving, seed: f.x * 2 + f.y,
       body: f.me ? '#2f7a3a' : '#54626c', trim: f.me ? '#7fd06a' : '#8c9aa2',
     });
-    if (f.me && !whole) PAINT.paintPlate(ctx, cx, cy - T * .62, 'You', '#ffd45e', T);
+    if (f.me && !whole) PAINT.paintPlate(ctx, sx, sy - T * .62, banked ? 'You ✓' : 'You', '#ffd45e', T);
   }
 
-  // a soft vignette pulls the eye to the middle
   if (!whole) {
-    const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * .32,
+    const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * .34,
                                         cw / 2, ch / 2, Math.max(cw, ch) * .72);
     vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, level === 2 ? 'rgba(4,2,0,.62)' : 'rgba(8,18,10,.45)');
+    vg.addColorStop(1, level === 2 ? 'rgba(4,2,0,.6)' : 'rgba(8,18,10,.42)');
     ctx.fillStyle = vg; ctx.fillRect(0, 0, cw, ch);
   }
 }
@@ -838,6 +510,15 @@ function handle(m) {
     case 'p': onPos(m); break;
     case 'o': onOthers(m.l); break;
     case 'chest': onChest(m); break;
+    case 'chestAdd':
+      (m.l || []).forEach(([id, t, v, bonus]) =>
+        chests.set(id, { x: t % W, y: (t / W) | 0, v, bonus: !!bonus }));
+      if (m.l && m.l.length && m.l[0][3]) toast('The idol scatters rich chests!', 'good');
+      break;
+    case 'banked':
+      banked = true;
+      toast('Gold banked — everything you carry now counts in full', 'good');
+      break;
     case 'loot': onLoot(m); break;
     case 'm': onMeta(m); break;
     case 'reached': if (m.id !== me.id) toast('Someone reached the idol'); break;
@@ -887,11 +568,11 @@ function onLevelStart(m) {
     boats.push({ x: b % W, y: (b / W) | 0 });
   });
   others.clear(); pops.length = 0;
-  gold = 0; finished = false; phase = 'play';
+  gold = 0; banked = false; finished = false; phase = 'play';
   $('gold').textContent = '0';
   ['wait', 'elim', 'champ'].forEach(id => $(id).style.display = 'none');
   banner('');
-  buildArt(level); buildAO(); buildMini(); baked = null;
+  buildMini(); chunks.clear();
   toast(m.stage.name + ' — find the idol');
   beep(392, 587, .3, 'triangle', .05);
 }
@@ -900,8 +581,8 @@ function onPos(m) {
   const jump = m.f || m.boat;
   px = m.x; py = m.y;
   if (jump) { camX = px + .5; camY = py + .5; }
-  if (typeof m.face === 'number') { facing = m.face; yawTarget = Math.atan2(DY[facing], DX[facing]); }
-  gold = m.money;
+  if (typeof m.face === 'number') facing = m.face;
+  gold = m.money; banked = !!m.banked;
   $('gold').textContent = gold;
   $('dist').innerHTML = m.fin
     ? '<span id="banked">Gold banked \u2713</span> · reached the idol'
@@ -981,8 +662,7 @@ cv.addEventListener('pointermove', e => {
   if (!dragging) return;
   const dx = e.clientX - dragX, dy = e.clientY - dragY;
   dragMoved += Math.abs(dx) + Math.abs(dy);
-  if (view === 0) { lookOff = clamp(lookOff - dx * 0.006, -1.1, 1.1); dragX = e.clientX; dragY = e.clientY; }
-  else if (Math.abs(dx) > 22 || Math.abs(dy) > 22) {
+  if (Math.abs(dx) > 22 || Math.abs(dy) > 22) {
     const d = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : (dy > 0 ? 2 : 0);
     held.length = 0; press(d); dragX = e.clientX; dragY = e.clientY;
   }
@@ -990,11 +670,10 @@ cv.addEventListener('pointermove', e => {
 ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev =>
   cv.addEventListener(ev, () => { dragging = false; held.length = 0; }));
 
-const VIEW_NAMES = ['Map view', 'First person', 'Follow view'];
+const VIEW_NAMES = ['Whole map', 'Garden view'];
 $('viewbtn').addEventListener('click', () => {
-  view = (view + 1) % 3;
+  view = view ? 0 : 1;
   $('viewbtn').textContent = VIEW_NAMES[view];
-  if (view === 0) lookOff = 0;
 });
 $('viewbtn').textContent = VIEW_NAMES[0];
 
@@ -1004,7 +683,7 @@ function tryMove(now) {
     const d = held[i], nx = px + DX[d], ny = py + DY[d];
     if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
     if (walkable(grid[ny * W + nx])) {
-      px = nx; py = ny; facing = d; yawTarget = Math.atan2(DY[d], DX[d]);
+      px = nx; py = ny; facing = d;
       lastMove = now; send({ t: 'm', d, s: ++seq });
       return;
     }
@@ -1021,10 +700,6 @@ function frame(now) {
   const tx = px + .5, ty = py + .5;
   camX += (tx - camX) * Math.min(1, dt * 11);
   camY += (ty - camY) * Math.min(1, dt * 11);
-  let d = (yawTarget + lookOff) - yaw;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  yaw += d * Math.min(1, dt * 9);
 
   for (const o of others.values()) {
     o.dx += (o.x - o.dx) * Math.min(1, dt * 11);
@@ -1032,8 +707,7 @@ function frame(now) {
   }
 
   if (grid) {
-    if (view === 0) render3D(now);
-    else drawTopDown(now, view === 2);
+    drawTopDown(now, view === 1);
 
     // floating gold numbers, drawn over whichever view is up
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
