@@ -58,9 +58,10 @@ td.sub{text-align:right;color:var(--dim);font-size:11px;white-space:nowrap}
     <div id="legend">
       <span><i class="dot" style="background:#ffd36b"></i>Top 3</span>
       <span><i class="dot" style="background:#7fd2ff"></i>Runner</span>
-      <span><i class="dot" style="background:#5fbb56"></i>At shrine</span>
-      <span><i class="dot" style="background:#f2884f"></i>Passerby</span>
+      <span><i class="dot" style="background:#5fbb56"></i>At idol</span>
       <span><i class="dot" style="background:#f2b23f"></i>Chest</span>
+      <span><i class="dot" style="background:#5c3b1e"></i>Ferry</span>
+      <span><i class="dot" style="background:#3f86b8"></i>Water</span>
     </div>
     <h2>Stage history</h2>
     <div id="hist"></div>
@@ -72,9 +73,17 @@ td.sub{text-align:right;color:var(--dim);font-size:11px;white-space:nowrap}
 'use strict';
 const $ = id => document.getElementById(id);
 const cv = $('g'), ctx = cv.getContext('2d');
-let W = 0, H = 0, grid = null, goal = 0, T = 6;
-let players = [], npcs = [], chests = [];
+const GROUND = 0, WALL = 1, WATER = 2, BRIDGE = 3, DOCK = 4, PROP = 5, SHRINE = 6;
+let W = 0, H = 0, grid = null, goal = 0, T = 6, level = 0;
+let players = [], chests = [], docks = [];
 let mazeLayer = null;
+
+// aerial palette per level: forest, ruins, temple interior
+const PAL = [
+  { ground: [226, 214, 176], wall: [58, 122, 62], prop: [36, 95, 44], shrine: [200, 162, 74] },
+  { ground: [214, 200, 170], wall: [150, 138, 114], prop: [178, 164, 138], shrine: [200, 162, 74] },
+  { ground: [120, 102, 76], wall: [74, 61, 44], prop: [104, 86, 62], shrine: [200, 162, 74] }
+];
 
 function buildMaze() {
   const wrap = $('mapWrap');
@@ -83,9 +92,17 @@ function buildMaze() {
   mazeLayer = document.createElement('canvas');
   mazeLayer.width = W; mazeLayer.height = H;
   const c = mazeLayer.getContext('2d'), img = c.createImageData(W, H), d = img.data;
+  const pal = PAL[level] || PAL[0];
   for (let i = 0; i < W * H; i++) {
-    const wall = grid[i] === 1, o = i * 4;
-    d[o] = wall ? 58 : 226; d[o + 1] = wall ? 122 : 210; d[o + 2] = wall ? 62 : 168; d[o + 3] = 255;
+    const k = grid[i], o = i * 4;
+    let col;
+    if (k === WATER) col = [63, 134, 184];
+    else if (k === BRIDGE || k === DOCK) col = [156, 122, 70];
+    else if (k === WALL) col = pal.wall;
+    else if (k === PROP) col = pal.prop;
+    else if (k === SHRINE) col = pal.shrine;
+    else col = pal.ground;
+    d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; d[o + 3] = 255;
   }
   c.putImageData(img, 0, 0);
   render();
@@ -97,21 +114,27 @@ function render() {
   ctx.drawImage(mazeLayer, 0, 0, cv.width, cv.height);
   const k = T, gx = goal % W, gy = (goal / W) | 0;
 
-  for (const [t, v] of chests) {
+  for (const [t] of chests) {
     const x = t % W, y = (t / W) | 0;
     ctx.fillStyle = '#f2b23f';
     ctx.fillRect(x * k + k * .2, y * k + k * .2, Math.max(2, k * .6), Math.max(2, k * .6));
   }
-  // shrine
+  // ferry landings, with the route they connect
+  ctx.strokeStyle = 'rgba(92,59,30,.55)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5;
+  for (const [a, b] of docks) {
+    const ax = (a % W + .5) * k, ay = ((a / W) | 0) + .5, bx = (b % W + .5) * k, by = ((b / W) | 0) + .5;
+    ctx.beginPath(); ctx.moveTo(ax, ay * k); ctx.lineTo(bx, by * k); ctx.stroke();
+    ctx.fillStyle = '#5c3b1e';
+    ctx.fillRect(ax - k, ay * k - k, Math.max(3, k * 2), Math.max(3, k * 2));
+    ctx.fillRect(bx - k, by * k - k, Math.max(3, k * 2), Math.max(3, k * 2));
+  }
+  ctx.setLineDash([]);
+  // the idol
   ctx.fillStyle = 'rgba(255,236,160,.35)';
   ctx.beginPath(); ctx.arc((gx + .5) * k, (gy + .5) * k, k * 4, 0, 6.283); ctx.fill();
   ctx.fillStyle = '#ffe07a';
   ctx.beginPath(); ctx.arc((gx + .5) * k, (gy + .5) * k, Math.max(4, k * 1.6), 0, 6.283); ctx.fill();
 
-  for (const [x, y] of npcs) {
-    ctx.fillStyle = '#f2884f';
-    ctx.beginPath(); ctx.arc((x + .5) * k, (y + .5) * k, Math.max(2, k * .7), 0, 6.283); ctx.fill();
-  }
   const ranked = [...players].sort((a, b) => b[6] - a[6]);
   ranked.forEach((p, i) => {
     const [id, n, x, y, money, fin] = p;
@@ -168,17 +191,18 @@ function handle(m) {
       $('empty').style.display = 'none'; cv.style.display = 'block';
       break;
     case 'adminMaze': {
-      W = m.W; H = m.H; goal = m.goal;
+      W = m.W; H = m.H; goal = m.goal; level = m.level | 0;
       const g = new Uint8Array(W * H);
       for (let i = 0; i < g.length; i++) g[i] = m.g.charCodeAt(i) - 48;
       grid = g;
       chests = (m.chests || []).map(c => [c[1], c[2]]);
-      players = []; npcs = [];
+      docks = m.docks || [];
+      players = [];
       buildMaze();
       break;
     }
     case 'adminPos':
-      players = m.p || []; npcs = m.n || []; render();
+      players = m.p || []; render();
       break;
     case 'adminMeta':
       $('timeTag').textContent = m.n + ' racing · ' + m.tl + 's left';
