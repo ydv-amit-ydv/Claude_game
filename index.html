@@ -216,8 +216,8 @@ const $ = id => document.getElementById(id);
 const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
 
 // tile kinds, matching world.py
-const GROUND = 0, WALL = 1, WATER = 2, BRIDGE = 3, DOCK = 4, PROP = 5, SHRINE = 6;
-const walkable = k => k === GROUND || k === BRIDGE || k === DOCK;
+const GROUND = 0, WALL = 1, WATER = 2, BRIDGE = 3, DOCK = 4, PROP = 5, SHRINE = 6, FLOWERS = 7;
+const walkable = k => k === GROUND || k === BRIDGE || k === DOCK || k === FLOWERS;
 const opaque = k => k === WALL || k === PROP || k === SHRINE;
 
 const cv = $('g'), ctx = cv.getContext('2d', { alpha: false });
@@ -364,6 +364,7 @@ function drawTopDown(now, whole) {
           : k === WALL ? P.hedgeMid
           : k === PROP ? P.canopy[0]
           : k === SHRINE ? '#d8bc70'
+          : k === FLOWERS ? '#c86f9e'
           : P.path[0];
         ctx.fillRect(ox + x * T, oy + y * T, T + 1, T + 1);
       }
@@ -429,6 +430,8 @@ function drawTopDown(now, whole) {
     if (f.me && !whole) PAINT.paintPlate(ctx, sx, sy - T * .62, banked ? 'You ✓' : 'You', '#ffd45e', T);
   }
 
+  if (!whole) PAINT.paintAir(ctx, ox, oy, T, W, H, camX, camY, t, level, cw, ch);
+
   if (!whole) {
     const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * .34,
                                         cw / 2, ch / 2, Math.max(cw, ch) * .72);
@@ -448,6 +451,7 @@ function buildMini() {
     let r, g, b;
     if (k === WATER) { r = 63; g = 134; b = 184; }
     else if (k === BRIDGE || k === DOCK) { r = 156; g = 122; b = 70; }
+    else if (k === FLOWERS) { r = 200; g = 111; b = 158; }
     else if (opaque(k)) { r = level === 2 ? 91 : 74; g = level === 2 ? 76 : 139; b = level === 2 ? 56 : 78; }
     else { r = 232; g = 224; b = 190; }
     d[o] = r; d[o + 1] = g; d[o + 2] = b; d[o + 3] = 255;

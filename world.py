@@ -20,19 +20,19 @@ import random
 from collections import deque
 
 # tile kinds (sent to the browser as digits)
-GROUND, WALL, WATER, BRIDGE, DOCK, PROP, SHRINE = 0, 1, 2, 3, 4, 5, 6
-WALKABLE = (GROUND, BRIDGE, DOCK)
+GROUND, WALL, WATER, BRIDGE, DOCK, PROP, SHRINE, FLOWERS = 0, 1, 2, 3, 4, 5, 6, 7
+WALKABLE = (GROUND, BRIDGE, DOCK, FLOWERS)
 OPAQUE = (WALL, PROP, SHRINE)          # blocks sight; water does not
 
 DIRS = ((0, -1), (1, 0), (0, 1), (-1, 0))
 
 LEVELS = [
     {"name": "The Forest", "cells": 41, "plazas": 16, "rivers": 2, "ponds": 5, "props": 0.055,
-     "shrines": 8, "docks": 5, "thicket": 0.72},
+     "shrines": 8, "docks": 5, "thicket": 0.72, "gardens": 7, "orchards": 4},
     {"name": "The Ruins",  "cells": 29, "plazas": 12, "rivers": 2, "ponds": 4, "props": 0.062,
-     "shrines": 7, "docks": 4, "thicket": 0.66},
+     "shrines": 7, "docks": 4, "thicket": 0.66, "gardens": 5, "orchards": 3},
     {"name": "The Temple", "cells": 21, "plazas": 9,  "rivers": 1, "ponds": 3, "props": 0.070,
-     "shrines": 5, "docks": 2, "thicket": 0.60},
+     "shrines": 5, "docks": 2, "thicket": 0.60, "gardens": 4, "orchards": 2},
 ]
 
 
@@ -58,6 +58,9 @@ class World:
         self.docks = self._docks(rnd, spec["docks"])
         self.shrines = self._landmarks(rnd, centres, spec["shrines"])
         self._props(rnd, spec["props"])
+        self._gardens(rnd, spec.get("gardens", 0), centres)
+        self._orchards(rnd, spec.get("orchards", 0), centres)
+        self._ensure_goal_connected()
         self._seal_unreachable()
 
         self.dist = self._bfs(self.goal)
@@ -317,6 +320,126 @@ class World:
             if open_ring >= 6:                 # in an open space, not a corridor
                 g[t] = PROP
 
+    # ------------------------------------------------------- 8b. formal beds
+    def _gardens(self, rnd, count, centres):
+        """Planted beds: a knot garden in a courtyard, or a border along a walk."""
+        w = self.g and self.w
+        for _ in range(count):
+            if not centres:
+                return
+            cx, cy = rnd.choice(centres)
+            shape = rnd.random()
+            if shape < 0.45:
+                # a ring of blooms around the middle of a courtyard
+                r = rnd.choice((2, 3))
+                for yy in range(cy - r, cy + r + 1):
+                    for xx in range(cx - r, cx + r + 1):
+                        d2 = (xx - cx) ** 2 + (yy - cy) ** 2
+                        if r * r - 2 <= d2 <= r * r + r and self.inside(xx, yy, 2) \
+                                and self.g[yy * self.w + xx] == GROUND:
+                            self.g[yy * self.w + xx] = FLOWERS
+            elif shape < 0.75:
+                # four quarters of a knot garden
+                for dy in (-2, -1, 1, 2):
+                    for dx in (-2, -1, 1, 2):
+                        xx, yy = cx + dx, cy + dy
+                        if self.inside(xx, yy, 2) and self.g[yy * self.w + xx] == GROUND:
+                            self.g[yy * self.w + xx] = FLOWERS
+            else:
+                # a border running off along the path
+                horiz = rnd.random() < 0.5
+                length = rnd.randint(4, 9)
+                off = rnd.choice((-2, 2))
+                for i in range(-length // 2, length // 2 + 1):
+                    xx, yy = (cx + i, cy + off) if horiz else (cx + off, cy + i)
+                    if self.inside(xx, yy, 2) and self.g[yy * self.w + xx] == GROUND:
+                        self.g[yy * self.w + xx] = FLOWERS
+
+    def _orchards(self, rnd, count, centres):
+        """Trees in ranks, so part of the world looks deliberately planted."""
+        w = self.w
+        for _ in range(count):
+            for _try in range(40):
+                cx = rnd.randrange(8, self.w - 8)
+                cy = rnd.randrange(8, self.h - 8)
+                rows, cols = rnd.randint(2, 3), rnd.randint(2, 4)
+                # the whole plot, not just the tree spots, has to be open ground,
+                # so the rows always have walkable aisles between them
+                clear = True
+                for yy in range(cy - 1, cy + (rows - 1) * 3 + 2):
+                    for xx in range(cx - 1, cx + (cols - 1) * 3 + 2):
+                        if not self.inside(xx, yy, 3) or self.g[yy * w + xx] != GROUND:
+                            clear = False
+                            break
+                    if not clear:
+                        break
+                spots = [(cy + r * 3) * w + cx + c * 3 for r in range(rows) for c in range(cols)] if clear else []
+                if clear and len(spots) >= 4:
+                    for t in spots:
+                        self.g[t] = PROP
+                    break
+
+    # -------------------------------------------- 8c. join the idol to the world
+    def _components(self):
+        """Every connected island of walkable tiles, largest first."""
+        w, g = self.w, self.g
+        seen = bytearray(w * self.h)
+        out = []
+        for s in range(w * self.h):
+            if g[s] not in WALKABLE or seen[s]:
+                continue
+            comp, dq = [], deque([s])
+            seen[s] = 1
+            while dq:
+                p = dq.popleft()
+                comp.append(p)
+                for q in (p - 1, p + 1, p - w, p + w):
+                    if 0 <= q < w * self.h and g[q] in WALKABLE and not seen[q]:
+                        seen[q] = 1
+                        dq.append(q)
+            out.append(comp)
+        out.sort(key=len, reverse=True)
+        return out
+
+    def _ensure_goal_connected(self):
+        """The courtyard's colonnade, a pond or a thicket can leave the idol in a
+        pocket of its own. Cut a way through until it joins the main landmass."""
+        w = self.w
+        for _ in range(8):
+            comps = self._components()
+            if not comps:
+                return
+            home = next((c for c in comps if self.goal in c), None)
+            if home is None:
+                return
+            if len(home) >= len(comps[0]):
+                return                                   # the idol is on the mainland
+            main = comps[0]
+            hs = set(home)
+            # closest pair between the pocket and the mainland, then dig straight
+            best = None
+            for a in home:
+                ax, ay = a % w, a // w
+                for b in main:
+                    bx, by = b % w, b // w
+                    d = abs(ax - bx) + abs(ay - by)
+                    if best is None or d < best[0]:
+                        best = (d, ax, ay, bx, by)
+            if best is None:
+                return
+            _, ax, ay, bx, by = best
+            x, y = ax, ay
+            while (x, y) != (bx, by):
+                if x != bx:
+                    x += 1 if bx > x else -1
+                elif y != by:
+                    y += 1 if by > y else -1
+                t = y * w + x
+                if self.g[t] == WATER:
+                    self.g[t] = BRIDGE
+                elif self.g[t] not in WALKABLE:
+                    self.g[t] = GROUND
+
     # ----------------------------------------------------- 9. seal the strays
     def _seal_unreachable(self):
         """Anything the idol cannot reach is turned back into scenery."""
@@ -330,7 +453,7 @@ class World:
 
     # -------------------------------------------------------------- 10. chests
     def _chests(self, rnd):
-        spots = [t for t in self.floors if self.g[t] == GROUND and self.dist[t] > 5]
+        spots = [t for t in self.floors if self.g[t] in (GROUND, FLOWERS) and self.dist[t] > 5]
         rnd.shuffle(spots)
         want = max(8, len(self.floors) // 46)
         used, chests = set(), []
@@ -369,4 +492,5 @@ class World:
         return {"size": self.w, "walkable": len(self.floors), "junctions": junctions,
                 "water": counts.get(WATER, 0), "bridge": counts.get(BRIDGE, 0),
                 "props": counts.get(PROP, 0), "shrines": counts.get(SHRINE, 0),
+                "beds": counts.get(FLOWERS, 0),
                 "docks": len(self.docks), "chests": len(self.chests), "maxd": self.maxd}
