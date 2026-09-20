@@ -6,71 +6,132 @@
 <title>The Last Garden</title>
 <style>
 :root{
-  --ink:#1e3a22; --dim:#5a7359; --leaf:#3f8f45; --leaf2:#5fbb56; --gold:#c9962f;
-  --panel:rgba(255,255,255,.93); --line:rgba(46,107,58,.26); --bad:#d1425a; --safe:env(safe-area-inset-bottom,0px)
+  --navy:#0d1a2b; --navy2:#152a40; --gold:#d9b667; --gold2:#f2d89a; --goldDim:#9e8449;
+  --ink:#f2e9d6; --dim:#9fb0b8; --leaf:#5fbb56; --bad:#e2596f; --safe:env(safe-area-inset-bottom,0px)
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-html,body{height:100%;background:#16301c;color:var(--ink);font:14px/1.4 system-ui,"Segoe UI",Roboto,sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none;touch-action:none}
-canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block;image-rendering:auto}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:0 3px 14px rgba(10,30,10,.28);backdrop-filter:blur(4px)}
+html,body{height:100%;background:#0a1410;color:var(--ink);font:14px/1.4 system-ui,"Segoe UI",Roboto,sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none;touch-action:none}
+canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
+
+/* the gilded panels from the concept art */
+.panel{position:relative;background:linear-gradient(180deg,rgba(18,34,52,.94),rgba(9,18,30,.96));
+  border:1px solid var(--goldDim);border-radius:10px;
+  box-shadow:0 6px 22px rgba(0,0,0,.5),inset 0 1px 0 rgba(255,232,180,.14);
+  backdrop-filter:blur(5px)}
+.panel::after{content:"";position:absolute;inset:3px;border:1px solid rgba(217,182,103,.30);
+  border-radius:7px;pointer-events:none}
 .hud{position:fixed;pointer-events:none;z-index:2}
-#top{left:10px;top:10px;padding:8px 12px;display:flex;flex-direction:column;gap:1px}
-#top b{font:700 15px Georgia,"Iowan Old Style",serif;color:var(--leaf)}
+
+#top{left:12px;top:12px;padding:11px 16px;display:flex;flex-direction:column;gap:2px;min-width:190px}
+#top b{font:700 17px Georgia,"Iowan Old Style",serif;color:var(--gold2);letter-spacing:.4px;
+  text-shadow:0 1px 6px rgba(217,182,103,.35)}
 #top .row{font-size:12.5px;color:var(--dim)}
-#gold{color:var(--gold);font-weight:800}
-#lb{right:10px;top:10px;min-width:180px;padding:9px 12px}
-#lb h4{font:700 11.5px Georgia,serif;color:var(--leaf);letter-spacing:.4px;margin-bottom:5px}
+#gold{color:var(--gold2);font-weight:800}
+#banked{color:var(--leaf);font-weight:700}
+
+#lb{right:12px;top:12px;min-width:206px;padding:10px 14px}
+#lb h4{font:700 11px Georgia,serif;color:var(--gold);letter-spacing:1.1px;margin-bottom:7px;
+  padding-bottom:6px;border-bottom:1px solid rgba(217,182,103,.26)}
 #lb ol{list-style:none}
-#lb li{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:1px 0;color:var(--dim)}
-#lb li.me{background:rgba(63,143,69,.15);border-radius:5px;padding:1px 5px;color:#16321a;font-weight:700}
-#lb li span:last-child{color:var(--gold);font-weight:700}
-#lb .foot{margin-top:6px;padding-top:5px;border-top:1px solid var(--line);font-size:9.5px;color:#8ba189}
-#mini{position:fixed;left:10px;bottom:calc(10px + var(--safe));border-radius:10px;border:1px solid var(--line);box-shadow:0 3px 14px rgba(10,30,10,.3);background:rgba(255,255,255,.9);z-index:2}
-#toast{position:fixed;left:50%;top:11%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:5px;pointer-events:none;z-index:4}
-#toast div{padding:7px 15px;border-radius:9px;font-weight:700;font-size:13px;background:var(--panel);border:1px solid var(--line);box-shadow:0 3px 12px rgba(10,30,10,.24);animation:tin .22s ease-out;transition:opacity .45s}
-#toast .good{border-color:var(--leaf2);color:#1c6b38}
-#toast .bad{border-color:var(--bad);color:#93233b}
-#toast .boat{border-color:#3f86b0;color:#1d5476}
-@keyframes tin{from{transform:translateY(-6px);opacity:0}}
-#banner{position:fixed;left:0;right:0;top:28%;text-align:center;font:700 29px Georgia,serif;color:#fff;text-shadow:0 2px 16px rgba(10,30,10,.8);pointer-events:none;display:none;z-index:3}
-#banner small{display:block;font:400 14px system-ui;margin-top:6px}
-#viewbtn{position:fixed;right:10px;bottom:calc(120px + var(--safe));z-index:3;padding:11px 15px;font:700 12.5px system-ui;color:#fff;background:linear-gradient(180deg,var(--leaf2),var(--leaf));border:0;border-radius:999px;box-shadow:0 3px 12px rgba(10,30,10,.4);cursor:pointer}
-#pad{position:fixed;left:50%;bottom:calc(14px + var(--safe));transform:translateX(-50%);display:grid;grid-template-columns:repeat(3,62px);grid-template-rows:repeat(2,62px);gap:7px;z-index:3}
-#pad button{background:rgba(255,255,255,.86);border:1px solid var(--line);border-radius:14px;color:var(--leaf);font-size:23px;font-weight:700;box-shadow:0 2px 10px rgba(10,30,10,.24)}
-#pad button:active{background:var(--leaf2);color:#fff}
-.ov{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(18,40,20,.66);z-index:6;padding:16px}
-.sheet{width:min(410px,94vw);max-height:92vh;overflow:auto;background:#fbfdf6;border-radius:18px;padding:24px;box-shadow:0 14px 44px rgba(10,30,10,.5)}
-.sheet h1{font:700 33px Georgia,"Iowan Old Style",serif;color:var(--leaf);line-height:1.1}
-.sheet p{color:var(--dim);margin:9px 0 16px;font-size:13.5px}
-.sheet input{width:100%;padding:13px;font:inherit;font-size:16px;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:10px;outline:0}
-.sheet input:focus{border-color:var(--leaf2)}
-.sheet button.big{margin-top:14px;width:100%;padding:14px;font:700 16px system-ui;color:#fff;background:linear-gradient(180deg,var(--leaf2),var(--leaf));border:0;border-radius:10px;cursor:pointer;box-shadow:0 4px 14px rgba(63,143,69,.4)}
-#tabs{display:flex;gap:5px;margin:14px 0;background:#e8f0df;border-radius:10px;padding:4px}
-#tabs button{flex:1;padding:10px;border:0;border-radius:7px;background:transparent;font:600 13.5px system-ui;color:var(--dim);cursor:pointer}
-#tabs button.on{background:#fff;color:var(--leaf);box-shadow:0 2px 7px rgba(10,30,10,.14)}
+#lb li{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:3px 0;color:var(--ink)}
+#lb li .pos{color:var(--dim);width:14px;font-weight:700;font-size:11px}
+#lb li .pip{width:9px;height:9px;border-radius:50%;background:#7fa8c4;flex-shrink:0;
+  box-shadow:0 0 6px rgba(160,200,230,.5)}
+#lb li .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#lb li .sc{color:var(--gold2);font-weight:700}
+#lb li.me{background:linear-gradient(90deg,rgba(217,182,103,.18),rgba(217,182,103,0));
+  border-radius:5px;padding:3px 6px;margin:0 -6px}
+#lb li.me .pip{background:var(--leaf);box-shadow:0 0 8px rgba(95,187,86,.7)}
+#lb li:first-child .pos{color:var(--gold2)}
+#lb li:first-child .pip{background:var(--gold2);box-shadow:0 0 9px rgba(242,216,154,.8)}
+#lb .foot{margin-top:7px;padding-top:6px;border-top:1px solid rgba(217,182,103,.2);
+  font-size:9.5px;color:#7b8e99;letter-spacing:.2px}
+
+#mini{position:fixed;left:12px;bottom:calc(12px + var(--safe));border-radius:10px;
+  border:1px solid var(--goldDim);box-shadow:0 6px 22px rgba(0,0,0,.5);background:#0d1a2b;z-index:2}
+
+#toast{position:fixed;left:50%;top:12%;transform:translateX(-50%);display:flex;flex-direction:column;
+  align-items:center;gap:6px;pointer-events:none;z-index:4}
+#toast div{padding:8px 17px;border-radius:9px;font-weight:700;font-size:13px;color:var(--ink);
+  background:linear-gradient(180deg,rgba(18,34,52,.95),rgba(9,18,30,.96));
+  border:1px solid var(--goldDim);box-shadow:0 5px 16px rgba(0,0,0,.45);
+  animation:tin .22s ease-out;transition:opacity .45s}
+#toast .good{border-color:var(--leaf);color:#c8f5bc}
+#toast .bad{border-color:var(--bad);color:#ffc9d2}
+#toast .boat{border-color:#5aa8d0;color:#c4e8ff}
+@keyframes tin{from{transform:translateY(-8px);opacity:0}}
+
+#banner{position:fixed;left:0;right:0;top:27%;text-align:center;font:700 31px Georgia,serif;
+  color:var(--gold2);text-shadow:0 2px 20px rgba(0,0,0,.9),0 0 30px rgba(217,182,103,.4);
+  pointer-events:none;display:none;z-index:3}
+#banner small{display:block;font:400 14px system-ui;color:var(--ink);margin-top:7px;text-shadow:0 2px 8px #000}
+
+#viewbtn{position:fixed;right:12px;bottom:calc(122px + var(--safe));z-index:3;padding:11px 16px;
+  font:700 12px system-ui;letter-spacing:.5px;color:#1a1204;
+  background:linear-gradient(180deg,var(--gold2),var(--gold));border:1px solid #8a7038;
+  border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer}
+#pad{position:fixed;left:50%;bottom:calc(14px + var(--safe));transform:translateX(-50%);
+  display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,64px);gap:7px;z-index:3}
+#pad button{background:linear-gradient(180deg,rgba(24,44,66,.92),rgba(10,20,32,.94));
+  border:1px solid var(--goldDim);border-radius:14px;color:var(--gold2);font-size:23px;font-weight:700;
+  box-shadow:0 3px 12px rgba(0,0,0,.45)}
+#pad button:active{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1204}
+
+.ov{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(5,12,20,.78);z-index:6;padding:16px}
+.sheet{width:min(420px,94vw);max-height:92vh;overflow:auto;position:relative;
+  background:linear-gradient(180deg,#13273c,#0a1627);border:1px solid var(--gold);border-radius:16px;
+  padding:26px;box-shadow:0 18px 60px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,232,180,.16)}
+.sheet::after{content:"";position:absolute;inset:6px;border:1px solid rgba(217,182,103,.24);
+  border-radius:11px;pointer-events:none}
+.sheet h1{font:700 32px Georgia,"Iowan Old Style",serif;color:var(--gold2);line-height:1.12;
+  text-shadow:0 2px 14px rgba(217,182,103,.3)}
+.sheet p{color:var(--dim);margin:10px 0 16px;font-size:13.5px}
+.sheet input{width:100%;padding:13px;font:inherit;font-size:16px;color:var(--ink);
+  background:rgba(6,14,24,.8);border:1px solid var(--goldDim);border-radius:9px;outline:0}
+.sheet input::placeholder{color:#5d7280}
+.sheet input:focus{border-color:var(--gold2)}
+.sheet button.big{margin-top:15px;width:100%;padding:14px;font:700 16px system-ui;color:#1a1204;
+  background:linear-gradient(180deg,var(--gold2),var(--gold));border:1px solid #8a7038;
+  border-radius:9px;cursor:pointer;box-shadow:0 5px 18px rgba(217,182,103,.3)}
+#tabs{display:flex;gap:5px;margin:14px 0;background:rgba(6,14,24,.7);border-radius:10px;padding:4px;
+  border:1px solid rgba(217,182,103,.2)}
+#tabs button{flex:1;padding:10px;border:0;border-radius:7px;background:transparent;
+  font:600 13.5px system-ui;color:var(--dim);cursor:pointer}
+#tabs button.on{background:linear-gradient(180deg,rgba(217,182,103,.22),rgba(217,182,103,.1));
+  color:var(--gold2);box-shadow:inset 0 0 0 1px rgba(217,182,103,.35)}
 .pane{display:none}.pane.on{display:block}
 #delays{display:flex;gap:6px;margin-top:8px}
-#delays button{flex:1;padding:10px 4px;font:600 13px system-ui;background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:8px;cursor:pointer}
-#delays button.on{background:var(--leaf);color:#fff;border-color:var(--leaf)}
-#code{text-align:center;letter-spacing:5px;text-transform:uppercase;font-weight:700;font-size:21px}
+#delays button{flex:1;padding:10px 4px;font:600 13px system-ui;background:rgba(6,14,24,.7);
+  color:var(--ink);border:1px solid rgba(217,182,103,.25);border-radius:8px;cursor:pointer}
+#delays button.on{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1204;border-color:#8a7038}
+#code{text-align:center;letter-spacing:6px;text-transform:uppercase;font-weight:700;font-size:21px;color:var(--gold2)}
 #err{color:var(--bad);font-size:12.5px;margin-top:9px;display:none;font-weight:600}
-.rules{background:#eef5e8;border-radius:12px;padding:12px 14px;margin-top:14px;font-size:12px;color:var(--dim);line-height:1.65}
-.rules b{color:var(--ink)}
+.rules{background:rgba(6,14,24,.6);border:1px solid rgba(217,182,103,.18);border-radius:11px;
+  padding:12px 14px;margin-top:14px;font-size:12px;color:var(--dim);line-height:1.7}
+.rules b{color:var(--gold2)}
 .levels{display:flex;gap:6px;margin-top:10px}
-.levels div{flex:1;background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px 6px;text-align:center;font-size:10.5px;color:var(--dim)}
-.levels div b{display:block;font-size:11.5px;color:var(--ink);margin-bottom:2px}
+.levels div{flex:1;background:rgba(6,14,24,.7);border:1px solid rgba(217,182,103,.22);border-radius:9px;
+  padding:9px 6px;text-align:center;font-size:10.5px;color:var(--dim)}
+.levels div b{display:block;font-size:11.5px;color:var(--gold2);margin-bottom:3px}
 #wait,#elim,#champ{display:none}
-.codebox{display:flex;align-items:center;gap:10px;background:#fff;border:2px dashed var(--leaf2);border-radius:12px;padding:12px 16px;margin:14px 0}
-.codebox b{font:700 27px Georgia,serif;letter-spacing:5px;color:var(--leaf);flex:1}
-.codebox button{padding:9px 13px;font:600 12.5px system-ui;background:var(--leaf);color:#fff;border:0;border-radius:8px;cursor:pointer}
-#cnt{font:700 46px Georgia,serif;color:var(--leaf);text-align:center}
-.statrow{display:flex;justify-content:space-between;font-size:13px;color:var(--dim);padding:5px 0;border-bottom:1px solid #e3ecdd}
+.codebox{display:flex;align-items:center;gap:10px;background:rgba(6,14,24,.8);
+  border:1px dashed var(--gold);border-radius:12px;padding:13px 16px;margin:14px 0}
+.codebox b{font:700 27px Georgia,serif;letter-spacing:6px;color:var(--gold2);flex:1}
+.codebox button{padding:9px 14px;font:600 12.5px system-ui;color:#1a1204;
+  background:linear-gradient(180deg,var(--gold2),var(--gold));border:0;border-radius:8px;cursor:pointer}
+#cnt{font:700 48px Georgia,serif;color:var(--gold2);text-align:center;
+  text-shadow:0 0 26px rgba(217,182,103,.45)}
+.statrow{display:flex;justify-content:space-between;font-size:13px;color:var(--dim);padding:6px 0;
+  border-bottom:1px solid rgba(217,182,103,.16)}
 .statrow b{color:var(--ink)}
 #champList{list-style:none;margin-top:8px}
-#champList li{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px solid #e3ecdd;color:var(--dim)}
+#champList li{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;
+  border-bottom:1px solid rgba(217,182,103,.16);color:var(--dim)}
+#champList li:first-child{color:var(--gold2);font-weight:700}
 @media (max-width:620px){
-  #top{padding:6px 9px}#top b{font-size:13px}#top .row{font-size:11px}
-  #lb{min-width:0;width:146px;padding:7px 9px}#lb li{font-size:11px}
+  #top{padding:8px 11px;min-width:0}#top b{font-size:14px}#top .row{font-size:11px}
+  #lb{min-width:0;width:158px;padding:8px 10px}#lb li{font-size:11px}
   #banner{font-size:22px}
   .sheet{padding:20px}.sheet h1{font-size:26px}
 }
@@ -80,13 +141,13 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block;image-rende
 <body>
 <canvas id="g"></canvas>
 
-<div id="top" class="hud card"><b id="stageName">The Last Garden</b>
+<div id="top" class="hud panel"><b id="stageName">The Last Garden</b>
   <div class="row" id="timer"></div>
   <div class="row">Gold <span id="gold">0</span> · <span id="rank"></span></div>
   <div class="row" id="dist"></div>
 </div>
 
-<div id="lb" class="hud card"><h4 id="lbTitle">STANDINGS</h4><ol id="lbl"></ol><div class="foot" id="lbFoot">Names stay hidden until the Temple.</div></div>
+<div id="lb" class="hud panel"><h4 id="lbTitle">STANDINGS</h4><ol id="lbl"></ol><div class="foot" id="lbFoot">Names stay hidden until the Temple.</div></div>
 
 <canvas id="mini"></canvas>
 <div id="toast"></div>
@@ -148,6 +209,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block;image-rende
 </div></div>
 
 <script src="render.js"></script>
+<script src="painted.js"></script>
 <script>
 'use strict';
 const SERVER = new URLSearchParams(location.search).get('server') || '';
@@ -559,84 +621,149 @@ function render3D(now) {
   ctx.drawImage(rbuf, 0, 0, RW, RH, 0, 0, cw, ch);
 }
 
-// ================================================================ top-down views
-function tileColor(k, x, y) {
-  const n = hash(x, y);
-  if (k === WALL) return level === 0 ? (n < .5 ? '#2f7a3a' : '#347f3e')
-                 : level === 1 ? (n < .5 ? '#9a8d74' : '#a2957c') : (n < .5 ? '#5b4c38' : '#63533c');
-  if (k === PROP) return level === 0 ? '#245f2c' : level === 1 ? '#b3a58a' : '#7a6647';
-  if (k === SHRINE) return '#c8a24a';
-  if (k === WATER) return n < .5 ? '#3f86b8' : '#3a7dae';
-  if (k === BRIDGE) return '#9c7a46';
-  if (k === DOCK) return '#8a6a3c';
-  return level === 0 ? (n < .5 ? '#86ad5e' : '#8fb566') : level === 1 ? (n < .5 ? '#b9ab8c' : '#c0b293') : (n < .5 ? '#6f5d43' : '#77644a');
+// ================================================================ painted overhead view
+// The static garden (ground, water, hedges, trees, shrines) is painted once
+// into an offscreen layer and reused until the camera drifts past its margin;
+// only the moving pieces are drawn every frame.
+let baked = null, bakedAt = null, bakeT = 0;
+
+function bakeWorld(T) {
+  const marginTiles = 6;
+  const tilesX = Math.ceil(cw / T) + marginTiles * 2;
+  const tilesY = Math.ceil(ch / T) + marginTiles * 2;
+  const x0 = clamp(Math.round(camX) - (tilesX >> 1), 0, Math.max(0, W - tilesX));
+  const y0 = clamp(Math.round(camY) - (tilesY >> 1), 0, Math.max(0, H - tilesY));
+  const x1 = Math.min(W - 1, x0 + tilesX), y1 = Math.min(H - 1, y0 + tilesY);
+  const P = PAINT.PALS[level];
+
+  const cvs = document.createElement('canvas');
+  const D = T * 0.42;
+  cvs.width = (x1 - x0 + 1) * T;
+  cvs.height = (y1 - y0 + 1) * T + Math.ceil(D) + 4;
+  const c = cvs.getContext('2d');
+  const padTop = Math.ceil(D) + 2;
+  const ox = -x0 * T, oy = -y0 * T + padTop;
+
+  // 1. the ground everywhere
+  for (let y = y0; y <= y1; y++)
+    for (let x = x0; x <= x1; x++)
+      PAINT.paintGround(c, x, y, ox + x * T, oy + y * T, T, grid[y * W + x], P, level);
+
+  // 2. the water as connected bodies, so shores and lilies read properly
+  PAINT.paintWater(c, grid, W, H, x0, x1, y0, y1, ox, oy, T, P, 0);
+
+  // 3. standing things, front rows last so they overlap correctly
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const k = grid[y * W + x], sx = ox + x * T, sy = oy + y * T;
+      if (k === WALL) PAINT.paintHedge(c, x, y, sx, sy, T, D, P, grid, W, H);
+      else if (k === PROP) PAINT.paintTree(c, x, y, sx, sy, T, D, P);
+      else if (k === SHRINE) PAINT.paintShrine(c, x, y, sx, sy, T, D, P, 0);
+    }
+  }
+  baked = { cvs, x0, y0, x1, y1, T, ox, oy, padTop };
+  bakedAt = { x: Math.round(camX), y: Math.round(camY) };
+  bakeT = T;
 }
 
 function drawTopDown(now, whole) {
   const t = now / 1000;
+  const P = PAINT.PALS[level];
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = level === 2 ? '#241c14' : '#6f9f5e';
-  ctx.fillRect(0, 0, cw, ch);
+
   let T, ox, oy;
   if (whole) {
     T = Math.max(2, Math.min((cw - 20) / W, (ch - 150) / H));
     ox = (cw - W * T) / 2; oy = (ch - H * T) / 2 + 10;
   } else {
-    T = Math.max(22, Math.min(40, Math.round(Math.min(cw, ch) / 15)));
-    ox = cw / 2 - (camX) * T; oy = ch / 2 - (camY) * T;
+    T = Math.max(26, Math.min(52, Math.round(Math.min(cw, ch) / 12)));
+    ox = cw / 2 - camX * T; oy = ch / 2 - camY * T;
   }
-  const x0 = Math.max(0, Math.floor(-ox / T)), x1 = Math.min(W - 1, Math.ceil((cw - ox) / T));
-  const y0 = Math.max(0, Math.floor(-oy / T)), y1 = Math.min(H - 1, Math.ceil((ch - oy) / T));
-  for (let y = y0; y <= y1; y++) {
-    for (let x = x0; x <= x1; x++) {
-      const k = grid[y * W + x];
-      ctx.fillStyle = tileColor(k, x, y);
-      ctx.fillRect(ox + x * T, oy + y * T, T + 1, T + 1);
-      if (!whole && T > 18 && k === WALL && hash(x + 7, y + 3) > .88) {
-        ctx.fillStyle = level === 0 ? '#f07aa8' : level === 1 ? '#e6d06a' : '#c8a24a';
-        ctx.beginPath(); ctx.arc(ox + (x + .5) * T, oy + (y + .5) * T, T * .12, 0, 6.283); ctx.fill();
+  const D = T * 0.42;
+
+  // backdrop
+  ctx.fillStyle = level === 2 ? '#17120c' : level === 1 ? '#3a3524' : '#22402a';
+  ctx.fillRect(0, 0, cw, ch);
+
+  if (whole) {
+    // the whole garden at a glance: flat, fast, readable
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const k = grid[y * W + x];
+        ctx.fillStyle = k === WATER ? P.water[1]
+          : k === BRIDGE || k === DOCK ? '#8a6a42'
+          : k === WALL ? P.hedgeMid
+          : k === PROP ? P.canopy[0]
+          : k === SHRINE ? '#d8bc70'
+          : P.path[0];
+        ctx.fillRect(ox + x * T, oy + y * T, T + 1, T + 1);
       }
     }
+  } else {
+    if (!baked || bakeT !== T || !bakedAt ||
+        Math.abs(bakedAt.x - camX) > 3 || Math.abs(bakedAt.y - camY) > 3) bakeWorld(T);
+    ctx.drawImage(baked.cvs, ox + baked.x0 * T, oy + baked.y0 * T - baked.padTop);
+
+    // water shimmer and shrine light have to move, so they go on top each frame
+    const x0 = Math.max(0, Math.floor(-ox / T)), x1 = Math.min(W - 1, Math.ceil((cw - ox) / T));
+    const y0 = Math.max(0, Math.floor(-oy / T)), y1 = Math.min(H - 1, Math.ceil((ch - oy) / T));
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if (grid[y * W + x] !== SHRINE) continue;
+        const cx = ox + (x + .5) * T, cy = oy + (y + .6) * T;
+        const pul = .5 + .5 * Math.sin(t * 1.8 + x);
+        const gl = ctx.createRadialGradient(cx, cy, 0, cx, cy, T * 1.8);
+        gl.addColorStop(0, P.glow + (.20 + .12 * pul) + ')');
+        gl.addColorStop(1, P.glow + '0)');
+        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(cx, cy, T * 1.8, 0, 6.283); ctx.fill();
+      }
+    }
+    ctx.restore();
   }
-  // idol
-  const pul = .5 + .5 * Math.sin(t * 2.6);
-  ctx.fillStyle = `rgba(255,214,110,${.4 + .3 * pul})`;
-  ctx.beginPath(); ctx.arc(ox + (gx + .5) * T, oy + (gy + .5) * T, T * 2.2, 0, 6.283); ctx.fill();
-  ctx.fillStyle = '#e8b93f';
-  ctx.beginPath(); ctx.arc(ox + (gx + .5) * T, oy + (gy + .5) * T, Math.max(3, T * .5), 0, 6.283); ctx.fill();
+
+  const x0 = Math.max(0, Math.floor(-ox / T)), x1 = Math.min(W - 1, Math.ceil((cw - ox) / T));
+  const y0 = Math.max(0, Math.floor(-oy / T)), y1 = Math.min(H - 1, Math.ceil((ch - oy) / T));
+
+  // the idol, always visible as a beacon
+  if (gx >= x0 - 3 && gx <= x1 + 3 && gy >= y0 - 3 && gy <= y1 + 3)
+    PAINT.paintIdol(ctx, ox + gx * T, oy + gy * T, T, t);
+
   // chests
-  ctx.fillStyle = '#e0a63a';
   for (const c of chests.values()) {
-    if (c.x < x0 || c.x > x1 || c.y < y0 || c.y > y1) continue;
-    ctx.fillRect(ox + (c.x + .2) * T, oy + (c.y + .25) * T, Math.max(2, T * .6), Math.max(2, T * .5));
+    if (c.x < x0 - 1 || c.x > x1 + 1 || c.y < y0 - 1 || c.y > y1 + 1) continue;
+    PAINT.paintChest(ctx, ox + c.x * T, oy + c.y * T, T, t, c.x * 3 + c.y);
   }
-  // boats
-  ctx.fillStyle = '#7a5230';
+  // ferries
   for (const b of boats) {
-    if (b.x < x0 || b.x > x1 || b.y < y0 || b.y > y1) continue;
-    ctx.beginPath();
-    ctx.ellipse(ox + (b.x + .5) * T, oy + (b.y + .5) * T, Math.max(2, T * .38), Math.max(1.5, T * .2), 0, 0, 6.283);
-    ctx.fill();
+    if (b.x < x0 - 1 || b.x > x1 + 1 || b.y < y0 - 1 || b.y > y1 + 1) continue;
+    PAINT.paintBoat(ctx, ox + b.x * T, oy + b.y * T, T, t, b.x + b.y);
   }
-  // figures
-  for (const o of others.values()) {
-    if (o.dx < x0 - 1 || o.dx > x1 + 1 || o.dy < y0 - 1 || o.dy > y1 + 1) continue;
-    const cx = ox + (o.dx + .5) * T, cy = oy + (o.dy + .5) * T;
-    ctx.fillStyle = 'rgba(0,0,0,.25)';
-    ctx.beginPath(); ctx.ellipse(cx, cy + T * .3, T * .24, T * .1, 0, 0, 6.283); ctx.fill();
-    ctx.fillStyle = '#7a8b93';
-    ctx.beginPath(); ctx.arc(cx, cy, Math.max(2, T * .28), 0, 6.283); ctx.fill();
+
+  // everyone on the path, far rows first
+  const figures = [];
+  for (const o of others.values())
+    figures.push({ x: o.dx, y: o.dy, me: false, moving: Math.abs(o.x - o.dx) + Math.abs(o.y - o.dy) > .02 });
+  figures.push({ x: camX - .5, y: camY - .5, me: true, moving: held.length > 0 });
+  figures.sort((a, b) => a.y - b.y);
+  for (const f of figures) {
+    if (f.x < x0 - 2 || f.x > x1 + 2 || f.y < y0 - 2 || f.y > y1 + 2) continue;
+    const cx = ox + (f.x + .5) * T, cy = oy + (f.y + .5) * T;
+    PAINT.paintPerson(ctx, cx, cy, T * 1.35, {
+      me: f.me, t, moving: f.moving, seed: f.x * 2 + f.y,
+      body: f.me ? '#2f7a3a' : '#54626c', trim: f.me ? '#7fd06a' : '#8c9aa2',
+    });
+    if (f.me && !whole) PAINT.paintPlate(ctx, cx, cy - T * .62, 'You', '#ffd45e', T);
   }
-  const mx = ox + camX * T, my = oy + camY * T;
-  ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.beginPath(); ctx.ellipse(mx, my + T * .32, T * .28, T * .12, 0, 0, 6.283); ctx.fill();
-  ctx.fillStyle = '#43a04a';
-  ctx.beginPath(); ctx.arc(mx, my, Math.max(3, T * .32), 0, 6.283); ctx.fill();
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
-  // heading
-  ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = Math.max(1.5, T * .1);
-  ctx.beginPath(); ctx.moveTo(mx, my);
-  ctx.lineTo(mx + Math.cos(yaw) * T * .7, my + Math.sin(yaw) * T * .7); ctx.stroke();
+
+  // a soft vignette pulls the eye to the middle
+  if (!whole) {
+    const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * .32,
+                                        cw / 2, ch / 2, Math.max(cw, ch) * .72);
+    vg.addColorStop(0, 'rgba(0,0,0,0)');
+    vg.addColorStop(1, level === 2 ? 'rgba(4,2,0,.62)' : 'rgba(8,18,10,.45)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, cw, ch);
+  }
 }
 
 // ---------- minimap
@@ -764,7 +891,7 @@ function onLevelStart(m) {
   $('gold').textContent = '0';
   ['wait', 'elim', 'champ'].forEach(id => $(id).style.display = 'none');
   banner('');
-  buildArt(level); buildAO(); buildMini();
+  buildArt(level); buildAO(); buildMini(); baked = null;
   toast(m.stage.name + ' — find the idol');
   beep(392, 587, .3, 'triangle', .05);
 }
@@ -776,7 +903,9 @@ function onPos(m) {
   if (typeof m.face === 'number') { facing = m.face; yawTarget = Math.atan2(DY[facing], DX[facing]); }
   gold = m.money;
   $('gold').textContent = gold;
-  $('dist').textContent = m.fin ? 'At the idol' : `${m.prog}% there · ${m.left} steps`;
+  $('dist').innerHTML = m.fin
+    ? '<span id="banked">Gold banked \u2713</span> · reached the idol'
+    : `${m.prog}% there · ${m.left} steps · gold at half`;
   if (m.boat) { toast('The ferry carries you across', 'boat'); boatFlash = 1; beep(220, 440, .5, 'sine', .06); }
   if (m.fin && !finished) {
     finished = true;
@@ -819,9 +948,12 @@ function onMeta(m) {
   m.lb.forEach(([n, sc], i) => {
     const li = document.createElement('li');
     if (i + 1 === m.rk) li.className = 'me';
-    const a = document.createElement('span'), b = document.createElement('span');
-    a.textContent = `#${i + 1} ${n}`; b.textContent = sc;
-    li.append(a, b); ol.appendChild(li);
+    const pos = document.createElement('span'); pos.className = 'pos';
+    pos.textContent = i === 0 ? '\u2605' : (i + 1);
+    const pip = document.createElement('span'); pip.className = 'pip';
+    const nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = n;
+    const s2 = document.createElement('span'); s2.className = 'sc'; s2.textContent = sc;
+    li.append(pos, pip, nm, s2); ol.appendChild(li);
   });
 }
 

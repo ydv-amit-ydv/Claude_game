@@ -614,7 +614,7 @@ async def ws_session(r, w, headers):
 
 
 PAGES = {"/": "index.html", "/index.html": "index.html", "/admin": "admin.html",
-         "/render.js": "render.js"}
+         "/render.js": "render.js", "/painted.js": "painted.js"}
 TYPES = {".html": b"text/html; charset=utf-8", ".js": b"application/javascript; charset=utf-8"}
 
 
