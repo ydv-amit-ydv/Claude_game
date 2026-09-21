@@ -86,6 +86,14 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
   transform:scale(.95)}
 
 /* ---- the match ticker, bottom left, out of the thumbs' way */
+#state{position:fixed;left:50%;top:calc(58px + var(--safe-t));transform:translateX(-50%);
+  z-index:4;padding:6px 14px;border-radius:999px;font:800 11.5px system-ui;letter-spacing:.7px;
+  pointer-events:none;white-space:nowrap;max-width:92vw;overflow:hidden;text-overflow:ellipsis}
+#state:empty{display:none}
+#state.safe{color:#0f2a14;background:linear-gradient(180deg,#a8ec9c,#6cc964);
+  box-shadow:0 0 22px rgba(120,230,150,.5)}
+#state.warn{color:#2a0d12;background:linear-gradient(180deg,#ffb3c0,#e2596f)}
+#state.soon{color:#2a1f08;background:linear-gradient(180deg,#ffd873,#f2b23f)}
 #teach{position:fixed;left:50%;top:22%;transform:translateX(-50%) scale(.94);z-index:7;
   width:min(88vw,340px);padding:16px 18px;border-radius:14px;opacity:0;pointer-events:none;
   display:flex;flex-direction:column;gap:9px;transition:opacity .22s ease,transform .22s ease;
@@ -270,6 +278,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 
 <!-- shown once each, the first time a rule actually bites -->
 <div id="teach"></div>
+<div id="state"></div>
 
 <!-- talk: six taps everyone can use, and open chat once the final starts -->
 <div id="talk">
@@ -318,6 +327,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
     <b>Bank your gold</b> — carry it to the idol and it is safe for good and counts in full. Gold still in your hands counts half and can be taken.<br>
     <b>Go again</b> — after banking you can set out for more. Every load you run back is locked in.<br>
     <b>Meeting someone</b> — whoever <b>carries</b> less takes a cut from whoever carries more. Banked gold is untouchable.<br>
+    <b>Sanctuary</b> — inside the green ring around the idol nobody can be robbed, by anyone. Wait about near the idol instead of running for it and you lose the right to take gold at all.<br>
     <b>Boats</b> — step onto a landing stage and the ferry carries you clear across the world.
   </div>
 </div></div>
@@ -369,6 +379,7 @@ let W = 0, H = 0, grid = null, goal = 0, gx = 0, gy = 0, level = 0, stage = null
 let chests = new Map(), others = new Map(), docks = [], boats = [];
 let me = { id: 0 }, px = 0, py = 0, seq = 0, lastMove = 0, facing = 2;
 let stageSecs = 0, isPractice = false;
+let sanctSteps = 4, sanctSet = null, inSanct = false, disarmed = 0;
 let gold = 0, bankAmt = 0, banked = false, finished = false, phase = 'lobby', joined = false, name = '', MI = 110;
 let mode = 'create', delay = 30, roomCode = '', joinCode = '';
 let view = 0;                      // 0 = first person, 1 = over the shoulder, 2 = whole map
@@ -596,6 +607,38 @@ function drawTopDown(now, whole) {
   const x0 = Math.max(0, Math.floor(-ox / T)), x1 = Math.min(W - 1, Math.ceil((cw - ox) / T));
   const y0 = Math.max(0, Math.floor(-oy / T)), y1 = Math.min(H - 1, Math.ceil((ch - oy) / T));
 
+  // the sanctuary: ground nobody may be robbed on
+  if (!whole && sanctSet && sanctSet.size) {
+    const pul = .5 + .5 * Math.sin(t * 1.5);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(120,230,150,${.055 + pul * .03})`;
+    for (const tt of sanctSet) {
+      const x = tt % W, y = (tt / W) | 0;
+      if (x < x0 - 1 || x > x1 + 1 || y < y0 - 1 || y > y1 + 1) continue;
+      ctx.fillRect(ox + x * T, oy + y * T, T + 1, T + 1);
+    }
+    ctx.restore();
+    // a dashed line around its edge, so you can see exactly where safety ends
+    ctx.save();
+    ctx.strokeStyle = `rgba(150,245,175,${.35 + pul * .2})`;
+    ctx.lineWidth = Math.max(1.5, T * .075);
+    ctx.setLineDash([T * .34, T * .26]);
+    ctx.lineDashOffset = -t * T * .5;
+    ctx.beginPath();
+    for (const tt of sanctSet) {
+      const x = tt % W, y = (tt / W) | 0;
+      if (x < x0 - 2 || x > x1 + 2 || y < y0 - 2 || y > y1 + 2) continue;
+      const sx = ox + x * T, sy = oy + y * T;
+      if (!sanctSet.has(tt - W)) { ctx.moveTo(sx, sy); ctx.lineTo(sx + T, sy); }
+      if (!sanctSet.has(tt + W)) { ctx.moveTo(sx, sy + T); ctx.lineTo(sx + T, sy + T); }
+      if (x > 0 && !sanctSet.has(tt - 1)) { ctx.moveTo(sx, sy); ctx.lineTo(sx, sy + T); }
+      if (x < W - 1 && !sanctSet.has(tt + 1)) { ctx.moveTo(sx + T, sy); ctx.lineTo(sx + T, sy + T); }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // the moving surface of the water, over the baked chunks
   if (!whole) PAINT.paintWaterLive(ctx, grid, W, H, x0, x1, y0, y1, ox, oy, T, P, t);
 
@@ -749,6 +792,32 @@ function grade() {
 }
 
 // ---------- minimap
+/**
+ * The tiles within sanctuary range of the idol, by walking steps rather than
+ * straight-line distance - so a hedge between you and the idol means you are
+ * not inside it yet. Drawn on the ground so the safe ground is obvious
+ * before you need it.
+ */
+function buildSanctuary() {
+  sanctSet = new Set();
+  if (!grid) return;
+  const q = [goal], seen = new Set([goal]);
+  let d = 0, edge = q.length;
+  while (q.length && d <= sanctSteps) {
+    const t = q.shift();
+    sanctSet.add(t);
+    const x = t % W, y = (t / W) | 0;
+    for (let k = 0; k < 4; k++) {
+      const nx = x + DX[k], ny = y + DY[k];
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const n = ny * W + nx;
+      if (seen.has(n) || !walkable(grid[n])) continue;
+      seen.add(n); q.push(n);
+    }
+    if (--edge === 0) { edge = q.length; d++; }
+  }
+}
+
 function buildMini() {
   miniLayer = document.createElement('canvas');
   miniLayer.width = W; miniLayer.height = H;
@@ -835,6 +904,7 @@ function handle(m) {
     case 'w':
       if (m.cfg && m.cfg.emotes) { EMOJI = m.cfg.emotes; buildEmoteBar(); }
       if (m.cfg && typeof m.cfg.revealFrom === 'number') revealFrom = m.cfg.revealFrom;
+      if (m.cfg && m.cfg.sanct) sanctSteps = m.cfg.sanct;
       me.id = m.id; roomCode = m.code; MI = m.cfg.mi; joined = true;
       mode = 'join'; joinCode = roomCode;
       if (m.key) { resumeKey = m.key; try { localStorage.setItem('garden_key', m.key); } catch (e) {} }
@@ -898,6 +968,17 @@ function handle(m) {
       banner('<b>' + esc(m.x) + '</b>');
       setTimeout(() => { if (phase === 'play') banner(''); }, 6000);
       beep(523, 784, .4, 'triangle', .07);
+      break;
+    case 'safe':
+      if (m.why === 'sanctuary') {
+        toast('Sanctuary \u2014 no gold changes hands here', 'good');
+        teach('sanct', 'The sanctuary',
+          'Close to the idol nobody can be robbed, by anyone. Get inside the green ring and your gold is safe while you walk the last few steps in.');
+      } else {
+        toast('They had been waiting too long to take anything', 'good');
+        teach('lurk', 'Waiting disarms you',
+          'Hang about near the idol instead of running for it and you cannot take gold from anyone. Ambushing runners on their way in is not a strategy.');
+      }
       break;
     case 'loot': onLoot(m); break;
     case 'm': onMeta(m); break;
@@ -970,6 +1051,8 @@ function onLevelStart(m) {
   ['wait', 'elim', 'champ'].forEach(id => $(id).style.display = 'none');
   banner('');
   buildMini(); chunks.clear(); wholeCvs = null;
+  buildSanctuary();
+  inSanct = false; disarmed = 0;
   toast((isPractice ? 'Practice \u2014 ' : '') + m.stage.name + ' \u2014 find the idol');
   beep(392, 587, .3, 'triangle', .05);
 }
@@ -985,6 +1068,7 @@ function onPos(m) {
     ? (banked ? '<span id="banked">All safe \u2713</span> · go gather more'
               : `${m.prog}% there · ${m.left} steps to the idol`)
     : `${m.left} steps to the idol · carried gold is at risk, and worth half`;
+  if (m.safe !== undefined || m.lurk !== undefined) setSafety(m);
   if (m.boat) {
     toast('The ferry carries you across', 'boat'); boatFlash = 1;
     beep(220, 440, .5, 'sine', .06);
@@ -1082,12 +1166,26 @@ function onLoot(m) {
   }
 }
 
+/** The two states worth knowing without reading anything: safe, or disarmed. */
+function setSafety(m) {
+  const was = inSanct;
+  inSanct = !!m.safe;
+  if (inSanct && !was) toast('Sanctuary \u2014 nobody can rob you here', 'good');
+  disarmed = m.lurk ? 2 : m.lurkSoon ? 1 : 0;
+  const b = $('state');
+  if (inSanct) { b.textContent = 'SANCTUARY'; b.className = 'safe'; }
+  else if (disarmed === 2) { b.textContent = 'WAITED TOO LONG \u2014 you cannot take gold'; b.className = 'warn'; }
+  else if (disarmed === 1) { b.textContent = 'move on, or you will not be able to take gold'; b.className = 'soon'; }
+  else { b.textContent = ''; b.className = ''; }
+}
+
 function onMeta(m) {
   $('timer').textContent = m.tl > 0 ? 'Time left ' + fmt(m.tl) : 'Level ending…';
   $('rank').textContent = `#${m.rk} of ${m.n} \u00b7 ${m.sc} pts`;
   // the two numbers that stay on screen on a phone
   $('rankMini').textContent = `#${m.rk}/${m.n}`;
   if (stageSecs > 0) dayT = Math.max(0, Math.min(1, 1 - m.tl / stageSecs));
+  setSafety(m);
   const tm = $('timeMini');
   tm.textContent = m.tl > 0 ? fmt(m.tl) : '0:00';
   tm.classList.toggle('low', m.tl > 0 && m.tl <= 30);

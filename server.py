@@ -56,6 +56,19 @@ BONUS_MIN, BONUS_MAX = 18, 40
 
 LOOT_FRAC = 0.28
 LOOT_COOLDOWN = 3.0
+
+# ---- sanctuary
+# Nobody may be robbed on the idol's doorstep. Measured in walking steps from
+# the idol rather than as the crow flies, so a hedge between you and the idol
+# means you are not there yet.
+SANCTUARY_STEPS = 4
+# ...and nobody may rob anyone while loitering on the approach. A runner who
+# has banked everything carries nothing, and the purse rule would otherwise
+# make them the guaranteed winner of every encounter with someone arriving
+# heavy. Hanging about near the idol instead of running for it disarms you.
+LURK_STEPS = 12           # the band around the idol that counts as the approach
+LURK_SECONDS = 12.0       # how long you may linger in it before you cannot take
+LURK_DECAY = 2.5          # how fast that clears once you leave or deliver
 BOAT_COOLDOWN = 6.0
 
 GOLD_POINTS = 10
@@ -93,7 +106,7 @@ class Passerby:
 class Player:
     __slots__ = ("id", "name", "w", "room", "x", "y", "t", "seq", "tok", "lm", "face",
                  "money", "banked", "trips", "score", "fin", "got", "best", "last_o",
-                 "loot_cd", "boat_cd", "em_cd", "chat_cd", "key", "gone")
+                 "loot_cd", "boat_cd", "em_cd", "chat_cd", "key", "gone", "lurk")
 
     def send(self, frame):
         if self.w is None:
@@ -221,6 +234,11 @@ def pos_msg(p, force=False, boat=False):
     m = {"t": "p", "x": p.x, "y": p.y, "s": p.seq, "money": p.money, "face": p.face,
          "left": wd.dist[p.t] if wd else 0, "prog": round(p.best * 100),
          "bank": p.banked, "sc": score_of(p)}
+    if wd is not None:
+        if in_sanctuary(wd, p):
+            m["safe"] = 1                      # standing where nobody may rob you
+        if p.lurk >= LURK_SECONDS:
+            m["lurk"] = 1                      # waiting here has disarmed you
     if force:
         m["f"] = 1
     if boat:
@@ -249,17 +267,36 @@ def reset_player(room, p):
     p.boat_cd = 0.0
     p.em_cd = 0.0
     p.chat_cd = 0.0
+    p.lurk = 0.0
     p.best = room.world.progress(p.t)
     p.score = 0
 
 
 # ------------------------------------------------------------------ looting
-def do_loot(a, b):
-    """The lighter purse takes a cut from the heavier one."""
+def in_sanctuary(wd, e):
+    """True when this figure stands on the idol's doorstep."""
+    if wd is None:
+        return False
+    d = wd.dist[e.t]
+    return 0 <= d <= SANCTUARY_STEPS
+
+
+def do_loot(a, b, wd=None):
+    """The lighter purse takes a cut from the heavier one - with two limits.
+
+    Nobody is robbed inside the sanctuary, and nobody who has been loitering
+    on the approach may do the robbing. Between them these close the hole
+    where the cunning play was to bank everything, stand by the idol carrying
+    nothing, and take a cut off every runner who arrived heavy.
+    """
     now = time.monotonic()
     if now < a.loot_cd or now < b.loot_cd or a.money == b.money:
         return None
+    if in_sanctuary(wd, a) or in_sanctuary(wd, b):
+        return "sanctuary"
     rich, poor = (a, b) if a.money > b.money else (b, a)
+    if getattr(poor, "lurk", 0) >= LURK_SECONDS:
+        return "lurking"
     amount = max(1, round(rich.money * LOOT_FRAC))
     rich.money -= amount
     poor.money += amount
@@ -271,6 +308,12 @@ def note_loot(entity, delta, from_player):
     if isinstance(entity, Player):
         entity.send(F({"t": "loot", "d": delta, "who": 1 if from_player else 0,
                        "money": entity.money}))
+
+
+def note_blocked(entity, why):
+    """Tell a runner why an encounter cost them nothing."""
+    if isinstance(entity, Player):
+        entity.send(F({"t": "safe", "why": why}))
 
 
 def spawn_chests(room, count, bonus=False):
@@ -506,8 +549,10 @@ def on_move(p, d, seq):
     met = False
     for q in room.players.values():
         if q is not p and q.gone is None and q.t == nt:
-            r = do_loot(p, q)
-            if r:
+            r = do_loot(p, q, wd)
+            if isinstance(r, str):
+                note_blocked(p, r); note_blocked(q, r)
+            elif r:
                 note_loot(r[0], -r[2], True)
                 note_loot(r[1], r[2], True)
                 if r[2] >= 10:
@@ -518,8 +563,10 @@ def on_move(p, d, seq):
     if not met:
         for npc in room.passersby:
             if npc.t == nt:
-                r = do_loot(p, npc)
-                if r:
+                r = do_loot(p, npc, wd)
+                if isinstance(r, str):
+                    note_blocked(p, r)
+                elif r:
                     note_loot(r[0], -r[2], False)
                     note_loot(r[1], r[2], False)
                 break
@@ -542,6 +589,7 @@ def on_move(p, d, seq):
         p.fin = True
         p.best = 1.0
         p.trips += 1
+        p.lurk = 0.0                      # you came to deliver, not to wait
         if dropped or first:
             # the idol thanks each delivery by scattering rich chests for everyone
             spawn_chests(room, BONUS_PER_ARRIVAL if first else 1, bonus=True)
@@ -590,14 +638,36 @@ def walk_passersby(room):
         npc.face, npc.t = d, nt
         for p in room.players.values():
             if p.gone is None and p.t == nt:
-                r = do_loot(p, npc)
-                if r:
+                r = do_loot(p, npc, wd)
+                if isinstance(r, str):
+                    note_blocked(p, r)
+                elif r:
                     note_loot(r[0], -r[2], False)
                     note_loot(r[1], r[2], False)
                 break
 
 
 # ------------------------------------------------------------------ fan-out
+def tick_lurk(room, dt):
+    """Time spent hanging about the idol instead of running for it.
+
+    Only used to decide whether someone may take gold. It climbs while you
+    are inside the approach band and falls faster once you leave, so passing
+    through - even slowly - never disarms you, but waiting does.
+    """
+    wd = room.world
+    if wd is None:
+        return
+    for p in room.players.values():
+        if p.gone is not None:
+            continue
+        d = wd.dist[p.t]
+        if 0 <= d <= LURK_STEPS:
+            p.lurk = min(LURK_SECONDS * 2, p.lurk + dt)
+        elif p.lurk > 0:
+            p.lurk = max(0.0, p.lurk - dt * LURK_DECAY)
+
+
 def broadcast_near(room):
     """Runners see only figures close by, and cannot tell who is who."""
     wd = room.world
@@ -640,9 +710,20 @@ def send_meta(room, now):
     top = [[p.name if reveal else "Runner", score_of(p), p.banked + p.money, round(p.best * 100)]
            for p in ps[:8]]
     left = max(0, int(room.ends_at - now))
+    wd = room.world
     for i, p in enumerate(ps):
-        p.send(F({"t": "m", "n": len(ps), "tl": left, "lb": top, "rk": i + 1,
-                  "sc": score_of(p), "money": p.money, "prog": round(p.best * 100)}))
+        m = {"t": "m", "n": len(ps), "tl": left, "lb": top, "rk": i + 1,
+             "sc": score_of(p), "money": p.money, "prog": round(p.best * 100)}
+        if wd is not None:
+            # a runner standing still still needs to know where they stand, so
+            # the sanctuary and lurk flags ride the once-a-second update too
+            if in_sanctuary(wd, p):
+                m["safe"] = 1
+            if p.lurk >= LURK_SECONDS:
+                m["lurk"] = 1
+            elif p.lurk > LURK_SECONDS * 0.6:
+                m["lurkSoon"] = 1
+        p.send(F(m))
     if room.admins:
         broadcast_admins(room, F({"t": "adminMeta", "n": len(ps), "tl": left,
                                   "lb": [[p.name, score_of(p), p.banked + p.money,
@@ -679,6 +760,7 @@ async def game_loop():
                     broadcast(room, lobby_msg(room))
             elif room.phase == "play":
                 sweep_gone(room, time.monotonic())
+                tick_lurk(room, TICK)
                 if now - room.last_walk >= PASSERBY_INTERVAL:
                     room.last_walk = now
                     walk_passersby(room)
@@ -788,7 +870,7 @@ def load_snapshot():
                 p.face = ps.get("face", 2)
                 p.score = 0
                 p.tok, p.lm = 1.0, time.monotonic()
-                p.loot_cd = p.boat_cd = p.em_cd = p.chat_cd = 0.0
+                p.loot_cd = p.boat_cd = p.em_cd = p.chat_cd = p.lurk = 0.0
                 p.last_o = None
                 p.gone = time.monotonic()      # everyone is away until they reconnect
                 if room.world:
@@ -827,6 +909,7 @@ def new_player(w, name):
     p.boat_cd = 0.0
     p.em_cd = 0.0
     p.chat_cd = 0.0
+    p.lurk = 0.0
     # the key a dropped phone comes back with
     p.key = base64.urlsafe_b64encode(os.urandom(12)).decode().rstrip("=")
     p.gone = None
@@ -835,7 +918,8 @@ def new_player(w, name):
 
 def cfg_msg():
     return {"mi": int(MOVE_INTERVAL * 1000), "view": VIEW_RADIUS, "emotes": EMOTES,
-            "revealFrom": REVEAL_FROM_STAGE,
+            "revealFrom": REVEAL_FROM_STAGE, "sanct": SANCTUARY_STEPS,
+            "lurkSteps": LURK_STEPS, "lurkSecs": LURK_SECONDS,
             "stages": [{"name": STAGE_NAMES[i], "cap": STAGE_CAPS[i], "secs": STAGE_SECONDS[i]}
                        for i in range(len(STAGE_NAMES))]}
 
