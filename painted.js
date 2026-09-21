@@ -279,6 +279,55 @@ const PAINT = (() => {
     }
   }
 
+  /**
+   * The living part of the water, drawn over the baked chunks every frame.
+   *
+   * The still parts - depth, banks, lily pads, reeds - are baked once and
+   * cached. Only what actually has to move is drawn here: travelling
+   * ripples and the glint of sun on them. Kept to the water tiles on
+   * screen, it is a few dozen strokes a frame.
+   */
+  function paintWaterLive(c, grid, W, H, x0, x1, y0, y1, ox, oy, T, P, t) {
+    if (T < 14) return;
+    const inW = (x, y) => (x >= 0 && y >= 0 && x < W && y < H && grid[y * W + x] === WATER);
+    c.save();
+    c.lineCap = 'round';
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if (!inW(x, y)) continue;
+        const sx = ox + x * T, sy = oy + y * T;
+        c.save();
+        c.beginPath(); c.rect(sx, sy, T + 1, T + 1); c.clip();
+        // two travelling wave crests, phased by world position so they run
+        // continuously across the whole body of water
+        for (let i = 0; i < 2; i++) {
+          const drift = ((t * .16 + i * .5 + y * .07) % 1);
+          const wy = sy + drift * T;
+          c.strokeStyle = `rgba(230,250,255,${.13 - i * .04})`;
+          c.lineWidth = Math.max(1, T * .05);
+          c.beginPath();
+          for (let k = 0; k <= 4; k++) {
+            const pxx = sx - T * .1 + (k / 4) * T * 1.2;
+            const pyy = wy + Math.sin(t * 1.1 + (x + k / 4) * 2.3 + i) * T * .07;
+            k ? c.lineTo(pxx, pyy) : c.moveTo(pxx, pyy);
+          }
+          c.stroke();
+        }
+        // a glint that slides along the crest
+        if (h2(x, y, 131) > .74) {
+          const g = (t * .5 + h2(x, y, 137) * 6.28);
+          c.fillStyle = 'rgba(255,253,232,.26)';
+          c.beginPath();
+          c.ellipse(sx + T * (.5 + Math.sin(g) * .3), sy + T * (.5 + Math.cos(g * .7) * .22),
+                    T * .16, T * .045, Math.sin(g) * .4, 0, TAU);
+          c.fill();
+        }
+        c.restore();
+      }
+    }
+    c.restore();
+  }
+
   // ---------------------------------------------------------------- hedges
   /** an extruded hedge block: cast shadow, dark face, lit crown, blossoms */
   /**
@@ -465,523 +514,14 @@ const PAINT = (() => {
     c.beginPath(); c.arc(x, y, r * .82, 0, TAU); c.fill();
   }
 
-  /** small dressing on open ground: flower beds, bushes, lamps, benches, urns */
-  function paintScatter(c, x, y, sx, sy, T, P, grid, W, H, level) {
-    if (T < 15) return;
-    const pick = h2(x, y, 101);
-    if (pick > .13) return;                       // most ground stays clear
-    const jx = h2(x, y, 103), jy = h2(x, y, 107);
-    const cx = sx + T * (.22 + jx * .56), cy = sy + T * (.34 + jy * .44);
-    const kind = (h2(x, y, 109) * 100) | 0;
 
-    if (kind < 34) {                              // a bed of blooms
-      const cols = P.blossom, base = (h2(x, y, 113) * cols.length) | 0;
-      const n = 2 + ((h2(x, y, 127) * 3) | 0);
-      c.fillStyle = 'rgba(30,60,30,.18)';
-      c.beginPath(); c.ellipse(cx, cy + T * .09, T * .2, T * .07, 0, 0, TAU); c.fill();
-      for (let i = 0; i < n; i++) {
-        const a = i / n * TAU + jx * 3;
-        const bx = cx + Math.cos(a) * T * .13, by = cy + Math.sin(a) * T * .085;
-        c.strokeStyle = '#3f8f43'; c.lineWidth = Math.max(1, T * .028);
-        c.beginPath(); c.moveTo(bx, by + T * .09); c.lineTo(bx, by); c.stroke();
-        bloom(c, bx, by, T * .042, cols[(base + i) % cols.length]);
-      }
-    } else if (kind < 56) {                       // a low bush
-      c.fillStyle = 'rgba(28,56,28,.24)';
-      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .21, T * .08, 0, 0, TAU); c.fill();
-      for (let i = 0; i < 3; i++) {
-        const a = -0.6 + i * 0.6, r = T * (.13 - i * .012);
-        const g = c.createRadialGradient(cx + Math.cos(a) * T * .1 - r * .3, cy - r * .4, r * .1,
-                                          cx + Math.cos(a) * T * .1, cy, r);
-        g.addColorStop(0, P.canopy[2]); g.addColorStop(1, P.canopy[0]);
-        c.fillStyle = g;
-        c.beginPath(); c.arc(cx + Math.cos(a) * T * .1, cy - Math.abs(Math.sin(a)) * T * .04, r, 0, TAU); c.fill();
-      }
-      if (h2(x, y, 131) > .6) bloom(c, cx + T * .06, cy - T * .07, T * .04, P.blossom[0]);
-    } else if (kind < 70) {                       // tuft of tall grass or reeds
-      const near = (grid[y * W + x - 1] === WATER) || (grid[y * W + x + 1] === WATER) ||
-                   (grid[(y - 1) * W + x] === WATER) || (grid[(y + 1) * W + x] === WATER);
-      c.strokeStyle = near ? '#5f9a52' : P.canopy[1];
-      c.lineWidth = Math.max(1, T * .035);
-      for (let i = 0; i < 6; i++) {
-        const bx = cx + (i - 3) * T * .035, lean = (h2(x + i, y, 137) - .5) * T * .1;
-        c.beginPath(); c.moveTo(bx, cy + T * .1);
-        c.quadraticCurveTo(bx + lean * .5, cy - T * .02, bx + lean, cy - T * .18); c.stroke();
-      }
-    } else if (kind < 82) {                       // a lamp post
-      c.fillStyle = 'rgba(24,40,28,.26)';
-      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .1, T * .04, 0, 0, TAU); c.fill();
-      c.fillStyle = '#3b4148';
-      c.fillRect(cx - T * .022, cy - T * .3, T * .044, T * .4);
-      c.fillStyle = '#2f353b';
-      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .07, T * .028, 0, 0, TAU); c.fill();
-      const gl = c.createRadialGradient(cx, cy - T * .34, 0, cx, cy - T * .34, T * .34);
-      gl.addColorStop(0, 'rgba(255,226,150,.55)'); gl.addColorStop(1, 'rgba(255,226,150,0)');
-      c.fillStyle = gl; c.beginPath(); c.arc(cx, cy - T * .34, T * .34, 0, TAU); c.fill();
-      c.fillStyle = '#ffe9a8';
-      c.beginPath(); c.arc(cx, cy - T * .34, T * .06, 0, TAU); c.fill();
-    } else if (kind < 92) {                       // a stone urn
-      c.fillStyle = 'rgba(24,40,28,.26)';
-      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .12, T * .045, 0, 0, TAU); c.fill();
-      const g = c.createLinearGradient(cx - T * .1, cy, cx + T * .1, cy);
-      g.addColorStop(0, P.stone[1]); g.addColorStop(1, P.stone[0]);
-      c.fillStyle = g;
-      c.beginPath();
-      c.moveTo(cx - T * .075, cy - T * .12); c.quadraticCurveTo(cx - T * .13, cy, cx - T * .06, cy + T * .1);
-      c.lineTo(cx + T * .06, cy + T * .1); c.quadraticCurveTo(cx + T * .13, cy, cx + T * .075, cy - T * .12);
-      c.closePath(); c.fill();
-      c.fillStyle = P.stone[1];
-      c.beginPath(); c.ellipse(cx, cy - T * .12, T * .09, T * .035, 0, 0, TAU); c.fill();
-      bloom(c, cx, cy - T * .17, T * .04, P.blossom[1]);
-    } else if (kind < 94) {                       // a bench beside the path
-      c.fillStyle = 'rgba(24,40,28,.24)';
-      c.beginPath(); c.ellipse(cx, cy + T * .09, T * .16, T * .05, 0, 0, TAU); c.fill();
-      c.fillStyle = '#8a6a42';
-      c.fillRect(cx - T * .15, cy - T * .02, T * .3, T * .05);
-      c.fillStyle = '#6d5133';
-      c.fillRect(cx - T * .15, cy - T * .12, T * .3, T * .04);
-      c.fillRect(cx - T * .13, cy + T * .03, T * .025, T * .06);
-      c.fillRect(cx + T * .105, cy + T * .03, T * .025, T * .06);
-    } else if (kind < 95) {                       // a fallen mossy log
-      c.fillStyle = 'rgba(24,40,28,.24)';
-      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .22, T * .06, 0, 0, TAU); c.fill();
-      const lg = c.createLinearGradient(cx, cy - T * .08, cx, cy + T * .08);
-      lg.addColorStop(0, '#8a6a42'); lg.addColorStop(1, '#5a4228');
-      c.fillStyle = lg;
-      roundRect(c, cx - T * .22, cy - T * .07, T * .44, T * .15, T * .07); c.fill();
-      c.fillStyle = 'rgba(110,170,96,.5)';
-      c.beginPath(); c.ellipse(cx - T * .05, cy - T * .06, T * .12, T * .035, 0, 0, TAU); c.fill();
-      c.fillStyle = '#6b4f32';
-      c.beginPath(); c.ellipse(cx + T * .22, cy, T * .035, T * .07, 0, 0, TAU); c.fill();
-    } else if (kind < 96) {                       // a ring of mushrooms
-      for (let i = 0; i < 5; i++) {
-        const a = i / 5 * TAU + jx * 4;
-        const mx = cx + Math.cos(a) * T * .14, my = cy + Math.sin(a) * T * .09;
-        c.fillStyle = '#e8ded0';
-        c.fillRect(mx - T * .012, my - T * .02, T * .024, T * .05);
-        c.fillStyle = i % 2 ? '#c8503f' : '#cf7a3a';
-        c.beginPath(); c.ellipse(mx, my - T * .02, T * .035, T * .024, 0, Math.PI, 0); c.fill();
-        c.fillStyle = 'rgba(255,255,255,.7)';
-        c.beginPath(); c.arc(mx - T * .01, my - T * .03, T * .008, 0, TAU); c.fill();
-      }
-    } else if (kind < 98) {                       // a birdbath
-      c.fillStyle = 'rgba(24,40,28,.26)';
-      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .13, T * .05, 0, 0, TAU); c.fill();
-      c.fillStyle = P.stone[0];
-      c.fillRect(cx - T * .035, cy - T * .1, T * .07, T * .2);
-      c.fillStyle = P.stone[1];
-      c.beginPath(); c.ellipse(cx, cy - T * .12, T * .13, T * .055, 0, 0, TAU); c.fill();
-      c.fillStyle = '#6fb6d8';
-      c.beginPath(); c.ellipse(cx, cy - T * .13, T * .095, T * .038, 0, 0, TAU); c.fill();
-    } else {                                      // a signpost at a junction
-      c.fillStyle = 'rgba(24,40,28,.24)';
-      c.beginPath(); c.ellipse(cx, cy + T * .1, T * .09, T * .035, 0, 0, TAU); c.fill();
-      c.fillStyle = '#6d5133';
-      c.fillRect(cx - T * .018, cy - T * .26, T * .036, T * .36);
-      c.fillStyle = '#9a7748';
-      c.fillRect(cx - T * .11, cy - T * .26, T * .17, T * .06);
-      c.fillStyle = '#8a6a42';
-      c.fillRect(cx - T * .05, cy - T * .16, T * .16, T * .055);
-    }
-  }
 
-  /** the blocking scenery tiles: broadleaf, cypress, blossom tree or statue */
-  function paintProp(c, x, y, sx, sy, T, D, P, level) {
-    const kind = (h2(x, y, 211) * 100) | 0;
-    const cx = sx + T * .5, base = sy + T * .78;
-    c.fillStyle = 'rgba(20,42,24,.34)';
-    c.beginPath(); c.ellipse(cx, base + T * .1, T * .5, T * .2, 0, 0, TAU); c.fill();
 
-    if (kind < 22 && level !== 2) {               // cypress / poplar
-      c.fillStyle = P.trunk;
-      c.fillRect(cx - T * .05, base - T * .2, T * .1, T * .3);
-      const g = c.createLinearGradient(cx - T * .3, base - T * 1.3, cx + T * .3, base);
-      g.addColorStop(0, P.canopy[2]); g.addColorStop(.5, P.canopy[1]); g.addColorStop(1, P.canopy[0]);
-      c.fillStyle = g;
-      c.beginPath();
-      c.moveTo(cx, base - T * 1.45);
-      c.quadraticCurveTo(cx + T * .34, base - T * .6, cx + T * .16, base - T * .16);
-      c.lineTo(cx - T * .16, base - T * .16);
-      c.quadraticCurveTo(cx - T * .34, base - T * .6, cx, base - T * 1.45);
-      c.fill();
-      c.fillStyle = 'rgba(190,240,150,.22)';
-      c.beginPath(); c.ellipse(cx - T * .08, base - T * .8, T * .07, T * .3, .1, 0, TAU); c.fill();
-      return;
-    }
-    if (kind < 34 && level !== 2) {               // blossom tree
-      c.fillStyle = P.trunk;
-      c.fillRect(cx - T * .07, base - T * .5, T * .14, T * .6);
-      const tiers = [[0, -T * 1.0, T * .5], [-T * .28, -T * .74, T * .38], [T * .28, -T * .72, T * .36]];
-      for (let i = tiers.length - 1; i >= 0; i--) {
-        const [dx, dy, r] = tiers[i];
-        const g = c.createRadialGradient(cx + dx - r * .35, base + dy - r * .4, r * .1, cx + dx, base + dy, r);
-        g.addColorStop(0, '#ffd9ea'); g.addColorStop(.55, '#f4a8c8'); g.addColorStop(1, '#d4789f');
-        c.fillStyle = g;
-        c.beginPath(); c.arc(cx + dx, base + dy, r, 0, TAU); c.fill();
-      }
-      for (let i = 0; i < 5; i++) {
-        const hx = h2(x * 7 + i, y, 221), hy = h2(x, y * 7 + i, 223);
-        c.fillStyle = 'rgba(255,255,255,.5)';
-        c.beginPath(); c.arc(cx + (hx - .5) * T * .8, base - T * .9 + (hy - .5) * T * .6, T * .05, 0, TAU); c.fill();
-      }
-      return;
-    }
-    if (kind < 44 || level === 2) {               // statue on a plinth
-      c.fillStyle = P.stone[0];
-      roundRect(c, cx - T * .28, base - T * .22, T * .56, T * .32, T * .05); c.fill();
-      const g = c.createLinearGradient(cx - T * .2, base - T * 1.1, cx + T * .2, base - T * .2);
-      g.addColorStop(0, P.stone[1]); g.addColorStop(1, P.stone[0]);
-      c.fillStyle = g;
-      c.beginPath();
-      c.moveTo(cx - T * .16, base - T * .22); c.lineTo(cx - T * .1, base - T * .78);
-      c.lineTo(cx + T * .1, base - T * .78); c.lineTo(cx + T * .16, base - T * .22);
-      c.closePath(); c.fill();
-      c.fillStyle = P.stone[1];
-      c.beginPath(); c.arc(cx, base - T * .88, T * .12, 0, TAU); c.fill();
-      c.fillStyle = 'rgba(120,170,110,.3)';                       // moss
-      c.beginPath(); c.ellipse(cx - T * .09, base - T * .3, T * .07, T * .04, 0, 0, TAU); c.fill();
-      return;
-    }
-    if (kind < 46) {                              // a garden pavilion
-      c.fillStyle = P.stone[0];
-      roundRect(c, cx - T * .38, base - T * .3, T * .76, T * .34, T * .05); c.fill();
-      c.strokeStyle = P.stone[1]; c.lineWidth = Math.max(2, T * .07);
-      c.beginPath();
-      c.moveTo(cx - T * .3, base - T * .28); c.lineTo(cx - T * .3, base - T * .8);
-      c.moveTo(cx + T * .3, base - T * .28); c.lineTo(cx + T * .3, base - T * .8);
-      c.moveTo(cx - T * .12, base - T * .28); c.lineTo(cx - T * .12, base - T * .82);
-      c.moveTo(cx + T * .12, base - T * .28); c.lineTo(cx + T * .12, base - T * .82);
-      c.stroke();
-      const rg = c.createLinearGradient(cx - T * .5, base - T * 1.2, cx + T * .5, base - T * .7);
-      rg.addColorStop(0, '#6f8f76'); rg.addColorStop(1, '#3f5c49');
-      c.fillStyle = rg;
-      c.beginPath();
-      c.moveTo(cx - T * .52, base - T * .76); c.lineTo(cx, base - T * 1.3);
-      c.lineTo(cx + T * .52, base - T * .76); c.closePath(); c.fill();
-      c.fillStyle = '#d8bc70';
-      c.beginPath(); c.arc(cx, base - T * 1.34, T * .07, 0, TAU); c.fill();
-      return;
-    }
-    if (kind < 50) {                              // a tiered fountain
-      const pul = .5 + .5 * Math.sin(h2(x, y, 701) * 6.283);
-      c.fillStyle = '#3c6f88';
-      c.beginPath(); c.ellipse(cx, base - T * .1, T * .44, T * .22, 0, 0, TAU); c.fill();
-      c.strokeStyle = P.stone[0]; c.lineWidth = Math.max(2, T * .08);
-      c.beginPath(); c.ellipse(cx, base - T * .1, T * .44, T * .22, 0, 0, TAU); c.stroke();
-      c.fillStyle = P.stone[1];
-      c.fillRect(cx - T * .06, base - T * .56, T * .12, T * .46);
-      c.beginPath(); c.ellipse(cx, base - T * .56, T * .2, T * .09, 0, 0, TAU); c.fill();
-      c.fillStyle = 'rgba(190,232,245,' + (.55 + .25 * pul) + ')';
-      c.beginPath(); c.ellipse(cx, base - T * .6, T * .07, T * .16, 0, 0, TAU); c.fill();
-      for (let i = 0; i < 6; i++) {
-        const a = i / 6 * TAU;
-        c.beginPath();
-        c.ellipse(cx + Math.cos(a) * T * .2, base - T * .48 + Math.abs(Math.sin(a)) * T * .06,
-                  T * .03, T * .05, 0, 0, TAU);
-        c.fill();
-      }
-      return;
-    }
-    if (kind < 52) {                              // a standing stone
-      const g = c.createLinearGradient(cx - T * .2, base - T * 1.1, cx + T * .2, base);
-      g.addColorStop(0, P.stone[1]); g.addColorStop(1, P.stone[0]);
-      c.fillStyle = g;
-      c.beginPath();
-      c.moveTo(cx - T * .19, base); c.lineTo(cx - T * .13, base - T * 1.02);
-      c.lineTo(cx + T * .1, base - T * 1.1); c.lineTo(cx + T * .2, base);
-      c.closePath(); c.fill();
-      c.fillStyle = 'rgba(110,160,100,.28)';
-      c.beginPath(); c.ellipse(cx - T * .05, base - T * .2, T * .1, T * .06, 0, 0, TAU); c.fill();
-      c.strokeStyle = 'rgba(255,255,255,.18)'; c.lineWidth = Math.max(1, T * .03);
-      c.beginPath(); c.moveTo(cx - T * .06, base - T * .8); c.lineTo(cx - T * .02, base - T * .5); c.stroke();
-      return;
-    }
-    if (kind < 60) {                              // a well
-      c.fillStyle = P.stone[0];
-      roundRect(c, cx - T * .26, base - T * .42, T * .52, T * .48, T * .08); c.fill();
-      c.fillStyle = '#1d2630';
-      c.beginPath(); c.ellipse(cx, base - T * .38, T * .2, T * .1, 0, 0, TAU); c.fill();
-      c.fillStyle = '#3c6f88';
-      c.beginPath(); c.ellipse(cx, base - T * .36, T * .15, T * .07, 0, 0, TAU); c.fill();
-      c.strokeStyle = '#6d5133'; c.lineWidth = Math.max(1.5, T * .05);
-      c.beginPath();
-      c.moveTo(cx - T * .24, base - T * .42); c.lineTo(cx - T * .24, base - T * .9);
-      c.moveTo(cx + T * .24, base - T * .42); c.lineTo(cx + T * .24, base - T * .9); c.stroke();
-      c.fillStyle = '#8a5f34';
-      c.beginPath();
-      c.moveTo(cx - T * .34, base - T * .86); c.lineTo(cx, base - T * 1.16);
-      c.lineTo(cx + T * .34, base - T * .86); c.closePath(); c.fill();
-      return;
-    }
-    if (kind < 68) {                              // a flowering trellis arch
-      c.strokeStyle = P.stone[0]; c.lineWidth = Math.max(2, T * .09);
-      c.beginPath();
-      c.moveTo(cx - T * .3, base); c.lineTo(cx - T * .3, base - T * .62);
-      c.quadraticCurveTo(cx, base - T * 1.1, cx + T * .3, base - T * .62);
-      c.lineTo(cx + T * .3, base); c.stroke();
-      c.strokeStyle = '#3f8f43'; c.lineWidth = Math.max(1.5, T * .05);
-      c.beginPath();
-      c.moveTo(cx - T * .3, base - T * .1);
-      c.quadraticCurveTo(cx - T * .1, base - T * .7, cx + T * .28, base - T * .5); c.stroke();
-      for (let i = 0; i < 6; i++) {
-        const a = Math.PI + i / 5 * Math.PI;
-        bloom(c, cx + Math.cos(a) * T * .3, base - T * .62 + Math.sin(a) * T * .42,
-              T * .05, P.blossom[i % P.blossom.length]);
-      }
-      return;
-    }
-    if (kind < 74) {                              // a mossy boulder
-      const g = c.createRadialGradient(cx - T * .12, base - T * .4, T * .04, cx, base - T * .24, T * .4);
-      g.addColorStop(0, P.stone[1]); g.addColorStop(1, P.stone[0]);
-      c.fillStyle = g;
-      c.beginPath(); c.ellipse(cx, base - T * .22, T * .38, T * .3, .1, 0, TAU); c.fill();
-      c.fillStyle = 'rgba(96,150,84,.45)';
-      c.beginPath(); c.ellipse(cx - T * .1, base - T * .4, T * .16, T * .08, -.2, 0, TAU); c.fill();
-      return;
-    }
-    if (kind < 80 && level === 1) {               // a dead, gnarled tree
-      c.strokeStyle = '#6a5136'; c.lineCap = 'round';
-      c.lineWidth = Math.max(2, T * .12);
-      c.beginPath(); c.moveTo(cx, base); c.lineTo(cx - T * .04, base - T * .7); c.stroke();
-      c.lineWidth = Math.max(1.5, T * .06);
-      c.beginPath();
-      c.moveTo(cx - T * .04, base - T * .55); c.lineTo(cx - T * .3, base - T * .9);
-      c.moveTo(cx - T * .04, base - T * .62); c.lineTo(cx + T * .26, base - T * .95);
-      c.moveTo(cx - T * .04, base - T * .7); c.lineTo(cx + T * .05, base - T * 1.05);
-      c.stroke(); c.lineCap = 'butt';
-      return;
-    }
-    // broadleaf tree, the common one
-    c.fillStyle = P.trunk;
-    c.fillRect(cx - T * .08, base - T * .5, T * .16, T * .6);
-    c.fillStyle = 'rgba(0,0,0,.18)';
-    c.fillRect(cx + T * .02, base - T * .5, T * .06, T * .6);
-    const tiers = [[0, -T * 1.0, T * .56], [-T * .3, -T * .72, T * .42], [T * .3, -T * .7, T * .4]];
-    for (let i = tiers.length - 1; i >= 0; i--) {
-      const [dx, dy, r] = tiers[i];
-      const g = c.createRadialGradient(cx + dx - r * .35, base + dy - r * .4, r * .1, cx + dx, base + dy, r);
-      g.addColorStop(0, P.canopy[2]); g.addColorStop(.5, P.canopy[1]); g.addColorStop(1, P.canopy[0]);
-      c.fillStyle = g;
-      c.beginPath(); c.arc(cx + dx, base + dy, r, 0, TAU); c.fill();
-    }
-    for (let i = 0; i < 6; i++) {
-      const hx = h2(x * 11 + i, y, 61), hy = h2(x, y * 11 + i, 63);
-      c.fillStyle = 'rgba(190,240,150,.32)';
-      c.beginPath();
-      c.arc(cx + (hx - .5) * T * .9, base - T * .9 + (hy - .5) * T * .7, T * .07, 0, TAU);
-      c.fill();
-    }
-  }
-
-  /** a tree: trunk, three tiers of canopy, highlight on the sunward side */
-  function paintTree(c, x, y, sx, sy, T, D, P) {
-    const cx = sx + T * .5, base = sy + T * .78;
-    c.fillStyle = 'rgba(22,44,26,.34)';
-    c.beginPath(); c.ellipse(cx, base + T * .1, T * .5, T * .2, 0, 0, TAU); c.fill();
-    c.fillStyle = P.trunk;
-    c.fillRect(cx - T * .08, base - T * .5, T * .16, T * .6);
-    const tiers = [[0, -T * 1.0, T * .56], [-T * .3, -T * .72, T * .42], [T * .3, -T * .7, T * .4]];
-    for (let i = tiers.length - 1; i >= 0; i--) {
-      const [dx, dy, r] = tiers[i];
-      const g = c.createRadialGradient(cx + dx - r * .35, base + dy - r * .4, r * .1, cx + dx, base + dy, r);
-      g.addColorStop(0, P.canopy[2]); g.addColorStop(.5, P.canopy[1]); g.addColorStop(1, P.canopy[0]);
-      c.fillStyle = g;
-      c.beginPath(); c.arc(cx + dx, base + dy, r, 0, TAU); c.fill();
-    }
-    for (let i = 0; i < 6; i++) {
-      const hx = h2(x * 11 + i, y, 61), hy = h2(x, y * 11 + i, 63);
-      c.fillStyle = 'rgba(190,240,150,.34)';
-      c.beginPath();
-      c.arc(cx + (hx - .5) * T * .9, base - T * .9 + (hy - .5) * T * .7, T * .07, 0, TAU);
-      c.fill();
-    }
-  }
-
-  /** a wayside shrine: stone plinth, arch, a lit crystal and a pool of light */
-  function paintShrine(c, x, y, sx, sy, T, D, P, t) {
-    const cx = sx + T * .5, base = sy + T * .85;
-    const pul = .5 + .5 * Math.sin(t * 1.8 + x);
-    const R = T * 1.7;
-    const gl = c.createRadialGradient(cx, base - T * .5, 0, cx, base - T * .5, R);
-    gl.addColorStop(0, P.glow + (.36 + .16 * pul) + ')');
-    gl.addColorStop(1, P.glow + '0)');
-    c.fillStyle = gl; c.beginPath(); c.arc(cx, base - T * .5, R, 0, TAU); c.fill();
-
-    c.fillStyle = 'rgba(20,34,24,.36)';
-    c.beginPath(); c.ellipse(cx, base + T * .1, T * .5, T * .2, 0, 0, TAU); c.fill();
-    // steps
-    c.fillStyle = P.stone[0];
-    roundRect(c, sx + T * .08, base - T * .18, T * .84, T * .3, T * .06); c.fill();
-    c.fillStyle = P.stone[1];
-    roundRect(c, sx + T * .18, base - T * .34, T * .64, T * .22, T * .05); c.fill();
-    // arch
-    const g = c.createLinearGradient(sx, base - T * 1.3, sx + T, base);
-    g.addColorStop(0, P.stone[1]); g.addColorStop(1, P.stone[0]);
-    c.fillStyle = g;
-    c.beginPath();
-    c.moveTo(cx - T * .3, base - T * .3);
-    c.lineTo(cx - T * .3, base - T * .85);
-    c.arc(cx, base - T * .85, T * .3, Math.PI, 0);
-    c.lineTo(cx + T * .3, base - T * .3);
-    c.closePath(); c.fill();
-    // hollow
-    c.fillStyle = 'rgba(16,22,26,.85)';
-    c.beginPath();
-    c.moveTo(cx - T * .17, base - T * .3);
-    c.lineTo(cx - T * .17, base - T * .85);
-    c.arc(cx, base - T * .85, T * .17, Math.PI, 0);
-    c.lineTo(cx + T * .17, base - T * .3);
-    c.closePath(); c.fill();
-    // the crystal itself
-    const cy = base - T * .72;
-    c.fillStyle = P.glow + (.85 + .15 * pul) + ')';
-    c.beginPath();
-    c.moveTo(cx, cy - T * .2); c.lineTo(cx + T * .11, cy); c.lineTo(cx, cy + T * .2);
-    c.lineTo(cx - T * .11, cy); c.closePath(); c.fill();
-    c.fillStyle = 'rgba(255,255,255,.8)';
-    c.beginPath();
-    c.moveTo(cx, cy - T * .2); c.lineTo(cx + T * .05, cy - T * .02); c.lineTo(cx, cy + T * .06);
-    c.lineTo(cx - T * .05, cy - T * .02); c.closePath(); c.fill();
-  }
 
   // -------------------------------------------------------------- objects
-  function paintChest(c, sx, sy, T, t, seed, bonus) {
-    const K = bonus ? 1.3 : 1;
-    const cx = sx + T * .5, base = sy + T * .72;
-    T = T * K;
-    const bob = Math.sin(t * 2 + seed) * T * .03;
-    const pul = .5 + .5 * Math.sin(t * 2.4 + seed);
-    const gl = c.createRadialGradient(cx, base - T * .2, 0, cx, base - T * .2, T * (bonus ? 1.7 : 1.25));
-    gl.addColorStop(0, bonus ? 'rgba(190,150,255,' + (.5 + .2 * pul) + ')'
-                             : 'rgba(255,205,90,' + (.36 + .16 * pul) + ')');
-    gl.addColorStop(1, bonus ? 'rgba(190,150,255,0)' : 'rgba(255,205,90,0)');
-    c.fillStyle = gl; c.beginPath(); c.arc(cx, base - T * .2, T * 1.25, 0, TAU); c.fill();
 
-    c.fillStyle = 'rgba(30,28,14,.34)';
-    c.beginPath(); c.ellipse(cx, base + T * .1, T * .34, T * .13, 0, 0, TAU); c.fill();
 
-    const y0 = base - T * .32 + bob;
-    const g = c.createLinearGradient(sx, y0, sx, y0 + T * .42);
-    g.addColorStop(0, '#c98c33'); g.addColorStop(1, '#7d5316');
-    c.fillStyle = g;
-    roundRect(c, cx - T * .3, y0 + T * .1, T * .6, T * .3, T * .05); c.fill();
-    // domed lid
-    const g2 = c.createLinearGradient(cx - T * .3, y0, cx + T * .3, y0 + T * .16);
-    if (bonus) { g2.addColorStop(0, '#e6d2ff'); g2.addColorStop(1, '#9a72d8'); }
-    else { g2.addColorStop(0, '#f2cd6a'); g2.addColorStop(1, '#c08a2a'); }
-    c.fillStyle = g2;
-    c.beginPath(); c.ellipse(cx, y0 + T * .1, T * .3, T * .16, 0, Math.PI, 0); c.fill();
-    c.fillStyle = '#6b4711';
-    c.fillRect(cx - T * .3, y0 + T * .07, T * .6, T * .06);
-    c.fillStyle = '#ffe9a8';
-    roundRect(c, cx - T * .05, y0 + T * .12, T * .1, T * .12, T * .02); c.fill();
-    // a couple of coins spilling out
-    c.fillStyle = '#ffd867';
-    c.beginPath(); c.arc(cx - T * .34, base + T * .02, T * .06, 0, TAU); c.fill();
-    c.beginPath(); c.arc(cx + T * .32, base + T * .04, T * .05, 0, TAU); c.fill();
-    // sparkle
-    const sp = Math.sin(t * 3 + seed);
-    if (sp > .6) {
-      c.strokeStyle = 'rgba(255,248,200,' + ((sp - .6) * 2.5) + ')';
-      c.lineWidth = Math.max(1, T * .03);
-      const px = cx + T * .22, py = y0 - T * .06, r = T * .12;
-      c.beginPath(); c.moveTo(px - r, py); c.lineTo(px + r, py);
-      c.moveTo(px, py - r); c.lineTo(px, py + r); c.stroke();
-    }
-  }
 
-  function paintIdol(c, sx, sy, T, t) {
-    const cx = sx + T * .5, base = sy + T * .8;
-    const pul = .5 + .5 * Math.sin(t * 1.5);
-    const R = T * 2.6;
-    const gl = c.createRadialGradient(cx, base - T * .6, 0, cx, base - T * .6, R);
-    gl.addColorStop(0, 'rgba(255,224,130,' + (.5 + .2 * pul) + ')');
-    gl.addColorStop(.5, 'rgba(255,200,90,.22)');
-    gl.addColorStop(1, 'rgba(255,200,90,0)');
-    c.fillStyle = gl; c.beginPath(); c.arc(cx, base - T * .6, R, 0, TAU); c.fill();
-
-    c.fillStyle = 'rgba(40,30,10,.4)';
-    c.beginPath(); c.ellipse(cx, base + T * .12, T * .62, T * .24, 0, 0, TAU); c.fill();
-    // plinth
-    c.fillStyle = '#b89550';
-    roundRect(c, cx - T * .62, base - T * .18, T * 1.24, T * .32, T * .06); c.fill();
-    c.fillStyle = '#d6b268';
-    roundRect(c, cx - T * .46, base - T * .38, T * .92, T * .24, T * .05); c.fill();
-    // seated figure
-    const g = c.createLinearGradient(cx - T * .4, base - T * 1.3, cx + T * .4, base - T * .3);
-    g.addColorStop(0, '#ffe9a0'); g.addColorStop(.5, '#f0c86a'); g.addColorStop(1, '#b8892c');
-    c.fillStyle = g;
-    c.beginPath();
-    c.moveTo(cx - T * .42, base - T * .38);
-    c.lineTo(cx - T * .22, base - T * .95);
-    c.lineTo(cx + T * .22, base - T * .95);
-    c.lineTo(cx + T * .42, base - T * .38);
-    c.closePath(); c.fill();
-    c.fillStyle = '#f7d886';
-    c.beginPath(); c.arc(cx, base - T * 1.06, T * .2, 0, TAU); c.fill();
-    // headdress
-    c.fillStyle = '#ffe9a0';
-    c.beginPath();
-    c.moveTo(cx - T * .22, base - T * 1.14); c.lineTo(cx, base - T * 1.5);
-    c.lineTo(cx + T * .22, base - T * 1.14); c.closePath(); c.fill();
-    c.fillStyle = 'rgba(255,255,235,' + (.6 + .4 * pul) + ')';
-    c.beginPath(); c.arc(cx, base - T * 1.46, T * .07, 0, TAU); c.fill();
-  }
-
-  function paintBoat(c, sx, sy, T, t, seed) {
-    const cx = sx + T * .5, cy = sy + T * .55 + Math.sin(t * 1.3 + seed) * T * .05;
-    c.fillStyle = 'rgba(10,30,44,.3)';
-    c.beginPath(); c.ellipse(cx, cy + T * .2, T * .44, T * .12, 0, 0, TAU); c.fill();
-    const g = c.createLinearGradient(cx, cy - T * .1, cx, cy + T * .2);
-    g.addColorStop(0, '#8a6134'); g.addColorStop(1, '#4f3419');
-    c.fillStyle = g;
-    c.beginPath();
-    c.moveTo(cx - T * .44, cy - T * .06);
-    c.quadraticCurveTo(cx, cy + T * .3, cx + T * .44, cy - T * .06);
-    c.quadraticCurveTo(cx, cy + T * .06, cx - T * .44, cy - T * .06);
-    c.fill();
-    c.fillStyle = '#a97d46';
-    c.fillRect(cx - T * .42, cy - T * .1, T * .84, T * .07);
-    c.strokeStyle = '#6b4a24'; c.lineWidth = Math.max(1, T * .035);
-    c.beginPath(); c.moveTo(cx - T * .1, cy - T * .06); c.lineTo(cx - T * .3, cy + T * .12); c.stroke();
-  }
-
-  /** a runner: cloak, hood, soft shadow, and a name plate above */
-  function paintPerson(c, cx, cy, T, opts) {
-    const o = opts || {};
-    const body = o.body || '#5d6f78', trim = o.trim || '#8ea1a8', isMe = o.me;
-    const bob = Math.sin((o.t || 0) * 6 + (o.seed || 0)) * (o.moving ? T * .035 : 0);
-    const y = cy + bob;
-    c.fillStyle = 'rgba(16,30,18,.34)';
-    c.beginPath(); c.ellipse(cx, cy + T * .34, T * .26, T * .1, 0, 0, TAU); c.fill();
-    if (isMe) {
-      const pul = .5 + .5 * Math.sin((o.t || 0) * 3);
-      c.strokeStyle = 'rgba(255,214,96,' + (.55 + .35 * pul) + ')';
-      c.lineWidth = Math.max(1.5, T * .06);
-      c.beginPath(); c.ellipse(cx, cy + T * .32, T * .36, T * .15, 0, 0, TAU); c.stroke();
-    }
-    // cloak
-    const g = c.createLinearGradient(cx - T * .22, y - T * .3, cx + T * .22, y + T * .3);
-    g.addColorStop(0, trim); g.addColorStop(.45, body);
-    g.addColorStop(1, 'rgba(0,0,0,.35)');
-    c.fillStyle = g;
-    c.beginPath();
-    c.moveTo(cx - T * .1, y - T * .26);
-    c.quadraticCurveTo(cx - T * .3, y, cx - T * .24, y + T * .3);
-    c.lineTo(cx + T * .24, y + T * .3);
-    c.quadraticCurveTo(cx + T * .3, y, cx + T * .1, y - T * .26);
-    c.closePath(); c.fill();
-    // hood and face
-    c.fillStyle = trim;
-    c.beginPath(); c.arc(cx, y - T * .3, T * .17, 0, TAU); c.fill();
-    c.fillStyle = '#e8c9a4';
-    c.beginPath(); c.arc(cx, y - T * .27, T * .1, 0, TAU); c.fill();
-    c.fillStyle = body;
-    c.beginPath(); c.arc(cx, y - T * .33, T * .16, Math.PI, 0); c.fill();
-    // rim light
-    c.strokeStyle = 'rgba(255,255,240,.32)'; c.lineWidth = Math.max(1, T * .035);
-    c.beginPath(); c.arc(cx - T * .05, y - T * .3, T * .17, Math.PI * .8, Math.PI * 1.5); c.stroke();
-  }
 
   /** the little name plates from the reference art */
   function paintPlate(c, cx, cy, text, accent, T) {
@@ -1047,8 +587,7 @@ const PAINT = (() => {
     }
   }
 
-  return { PALS, paintAir, paintGround, paintWater, paintHedge, paintTree, paintProp, paintScatter, bloom, paintShrine,
-           paintChest, paintIdol, paintBoat, paintPerson, paintPlate, roundRect, h2,
+  return { PALS, paintAir, paintGround, paintWater, paintWaterLive, paintHedge, bloom, paintPlate, roundRect, h2,
            GROUND, WALL, WATER, BRIDGE, DOCK, PROP, SHRINE };
 })();
 

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Last Garden — big screen</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--gold:#f2b23f;--gold2:#ffd873;--ink:#f2e9d6;--dim:#9fb0b8;--line:rgba(217,182,103,.24)}
+body{background:radial-gradient(ellipse at 50% 0%,#12301f,#060d10 70%);color:var(--ink);
+  font:400 16px/1.5 system-ui,sans-serif;min-height:100vh;overflow:hidden}
+#join{display:flex;flex-direction:column;align-items:center;justify-content:center;
+  height:100vh;gap:22px;padding:24px}
+h1{font:700 clamp(30px,5vw,62px) Georgia,serif;color:var(--gold2);letter-spacing:1px}
+#codeBig{font:800 clamp(52px,13vw,168px)/1 "SF Mono",Menlo,monospace;color:var(--gold);
+  letter-spacing:clamp(6px,2vw,22px);text-shadow:0 0 40px rgba(242,178,63,.45)}
+#qrWrap{background:#fff;padding:clamp(10px,1.6vw,22px);border-radius:14px;
+  box-shadow:0 12px 50px rgba(0,0,0,.6)}
+#qr{display:block;width:clamp(200px,26vw,380px);height:clamp(200px,26vw,380px)}
+#url{font:600 clamp(14px,1.7vw,24px) system-ui;color:var(--dim);word-break:break-all;text-align:center}
+#sub{font:400 clamp(13px,1.5vw,20px) system-ui;color:var(--dim)}
+#count{font:700 clamp(18px,2.4vw,34px) system-ui;color:var(--ink)}
+#count b{color:var(--gold2)}
+
+#live{display:none;height:100vh;flex-direction:column;padding:clamp(14px,2vw,34px);gap:14px}
+#head{display:flex;align-items:baseline;justify-content:space-between;gap:20px;
+  border-bottom:1px solid var(--line);padding-bottom:12px}
+#stage{font:700 clamp(22px,3.4vw,48px) Georgia,serif;color:var(--gold2)}
+#clock{font:800 clamp(28px,4.6vw,72px)/1 "SF Mono",Menlo,monospace;color:var(--ink);
+  font-variant-numeric:tabular-nums}
+#clock.low{color:#ff8fa3}
+#rows{flex:1;display:grid;grid-auto-rows:1fr;gap:clamp(4px,.7vw,10px);overflow:hidden}
+.r{display:flex;align-items:center;gap:clamp(10px,1.6vw,24px);padding:0 clamp(10px,1.4vw,20px);
+  border-radius:10px;background:rgba(255,255,255,.035);font-size:clamp(15px,2.2vw,34px)}
+.r .p{width:clamp(34px,4vw,70px);font-weight:800;color:var(--dim);text-align:right}
+.r .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.r .g{color:var(--gold2);font-weight:700;font-variant-numeric:tabular-nums}
+.r .s{width:clamp(80px,9vw,170px);text-align:right;font-weight:800;
+  color:var(--gold);font-variant-numeric:tabular-nums}
+.r:nth-child(1){background:linear-gradient(90deg,rgba(242,178,63,.22),rgba(242,178,63,.03))}
+.r:nth-child(1) .p,.r:nth-child(2) .p,.r:nth-child(3) .p{color:var(--gold2)}
+#foot{display:flex;justify-content:space-between;color:var(--dim);
+  font-size:clamp(12px,1.5vw,22px);border-top:1px solid var(--line);padding-top:10px}
+#tick{color:var(--gold2)}
+#err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+  background:rgba(4,10,8,.9);font-size:22px;color:#ffb0c0;text-align:center;padding:30px}
+</style>
+</head>
+<body>
+<div id="join">
+  <h1>The Last Garden</h1>
+  <div id="sub">Point your phone's camera at this, or type the code</div>
+  <div id="qrWrap"><canvas id="qr" width="600" height="600"></canvas></div>
+  <div id="codeBig">------</div>
+  <div id="url"></div>
+  <div id="count"><b>0</b> runners ready</div>
+</div>
+
+<div id="live">
+  <div id="head"><div id="stage">—</div><div id="clock">0:00</div></div>
+  <div id="rows"></div>
+  <div id="foot"><span id="tick">&nbsp;</span><span id="who">—</span></div>
+</div>
+<div id="err"></div>
+
+<script src="qr.js"></script>
+<script>
+// The big screen. Before a level it is a join poster: a QR anyone can point
+// a camera at, and the code in letters readable from the back of the room.
+// Once play starts it becomes the standings.
+'use strict';
+const $ = id => document.getElementById(id);
+const P = new URLSearchParams(location.search);
+const code = (P.get('code') || '').trim().toUpperCase();
+const ROWS = Math.max(6, Math.min(14, +(P.get('rows') || 10)));
+let ws = null, phase = 'lobby';
+
+if (!/^[A-Z0-9]{6}$/.test(code)) {
+  $('err').style.display = 'flex';
+  $('err').textContent = 'Open this page with a tournament code, for example  /board?code=ABC123';
+} else {
+  $('codeBig').textContent = code;
+  const url = location.origin + '/?code=' + code;
+  $('url').textContent = url.replace(/^https?:\/\//, '');
+  const c = $('qr').getContext('2d');
+  if (!QR.draw(c, url, 0, 0, 600)) { $('url').textContent = url + '  (code too long for a QR)'; }
+  connect();
+}
+
+function fmt(s) { s = Math.max(0, s | 0); return (s / 60 | 0) + ':' + String(s % 60).padStart(2, '0'); }
+
+function connect() {
+  const base = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  ws = new WebSocket(base);
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'admin', code }));
+  ws.onmessage = e => handle(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+
+function show(live) {
+  $('join').style.display = live ? 'none' : 'flex';
+  $('live').style.display = live ? 'flex' : 'none';
+}
+
+function handle(m) {
+  switch (m.t) {
+    case 'err':
+      $('err').style.display = 'flex'; $('err').textContent = m.msg; break;
+    case 'adminHi':
+    case 'adminStage':
+      phase = m.phase || phase;
+      if (m.stage) $('stage').textContent = m.stage.name;
+      show(phase === 'play');
+      if (phase === 'lobby' && m.startIn != null)
+        $('count').innerHTML = '<b>' + fmt(m.startIn) + '</b> until the level starts';
+      break;
+    case 'adminMeta': {
+      show(true);
+      const cl = $('clock');
+      cl.textContent = fmt(m.tl); cl.classList.toggle('low', m.tl <= 30);
+      $('who').textContent = m.n + ' runners · tournament ' + code;
+      const rows = $('rows');
+      rows.textContent = '';
+      m.lb.slice(0, ROWS).forEach(([nm, sc, gold], i) => {
+        const d = document.createElement('div'); d.className = 'r';
+        const p = document.createElement('span'); p.className = 'p'; p.textContent = i + 1;
+        const n = document.createElement('span'); n.className = 'n'; n.textContent = nm;
+        const g = document.createElement('span'); g.className = 'g'; g.textContent = gold + ' gold';
+        const s = document.createElement('span'); s.className = 's'; s.textContent = sc;
+        d.append(p, n, g, s); rows.appendChild(d);
+      });
+      break;
+    }
+    case 'adminFeed': $('tick').textContent = m.x; break;
+  }
+}
+</script>
+</body>
+</html>

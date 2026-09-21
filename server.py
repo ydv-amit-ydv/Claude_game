@@ -33,6 +33,8 @@ TICK = 0.1
 PASSERBY_INTERVAL = 0.5
 INTERMISSION = int(os.environ.get("GARDEN_INTERMISSION", 20))
 MIN_DELAY, MAX_DELAY = int(os.environ.get("GARDEN_MIN_DELAY", 10)), 3600
+RESUME_GRACE = 150        # seconds a dropped phone has to come back
+PRACTICE_SECONDS = 90     # a practice run is short on purpose
 ROOM_IDLE_TTL = 240
 MAX_ROOMS = 200
 
@@ -69,20 +71,33 @@ CODE_CHARS = "".join(c for c in string.ascii_uppercase + string.digits if c not 
 
 # ------------------------------------------------------------------ figures
 class Passerby:
-    __slots__ = ("id", "t", "money", "loot_cd", "face")
+    """Someone else on the road.
 
-    def __init__(self, pid, t, money):
+    Not all of them are the same. A WANDERER drifts. A PILGRIM is walking
+    somewhere in particular and mostly keeps to its heading. A CUTPURSE
+    steers toward whoever is nearest, and a SHY one steers away. You cannot
+    tell which is which by looking, which is the point.
+    """
+    WANDER, PILGRIM, CUTPURSE, SHY = 0, 1, 2, 3
+
+    __slots__ = ("id", "t", "money", "loot_cd", "face", "kind", "aim")
+
+    def __init__(self, pid, t, money, kind=0):
         self.id, self.t, self.money = pid, t, money
         self.loot_cd = 0.0
         self.face = 0
+        self.kind = kind
+        self.aim = None        # a tile a pilgrim is heading for
 
 
 class Player:
     __slots__ = ("id", "name", "w", "room", "x", "y", "t", "seq", "tok", "lm", "face",
                  "money", "banked", "trips", "score", "fin", "got", "best", "last_o",
-                 "loot_cd", "boat_cd", "em_cd", "chat_cd")
+                 "loot_cd", "boat_cd", "em_cd", "chat_cd", "key", "gone")
 
     def send(self, frame):
+        if self.w is None:
+            return                  # restored from a snapshot, not yet reconnected
         tr = self.w.transport
         if tr.is_closing():
             return
@@ -120,6 +135,8 @@ class Room:
         self.champion = None
         self.next_npc = -1
         self.next_chest = 0
+        self.seed = 0
+        self.practice = False
 
 
 ROOMS = {}
@@ -176,6 +193,18 @@ def world_msg(room):
 
 
 # ------------------------------------------------------------------ scoring
+def rank_key(p):
+    """How runners are ordered, and how ties at the cut are settled.
+
+    With 300 runners a tie on score at the 50th place is likely, so the
+    order falls through to what the tournament actually rewards: gold
+    banked at the idol, then how close they got, then who got there
+    first. Only if all of that matches does it come down to join order,
+    which at least is stable rather than arbitrary.
+    """
+    return (-score_of(p), -p.banked, -p.best, -p.trips, p.id)
+
+
 def score_of(p):
     """Gold left at the idol is safe and counts in full. Gold still being
     carried is only worth half, and can still be taken off you."""
@@ -273,20 +302,26 @@ def spawn_chests(room, count, bonus=False):
 
 
 # ------------------------------------------------------------------ stages
-def start_stage(room):
+def start_stage(room, seed=None):
     room.feed = []
-    room.world = worldgen.World(room.stage, random.getrandbits(48))
+    room.seed = random.getrandbits(48) if seed is None else seed
+    room.world = worldgen.World(room.stage, room.seed)
     room.phase = "play"
     room.t0 = time.time()
-    room.ends_at = room.t0 + STAGE_SECONDS[room.stage]
+    room.ends_at = room.t0 + (PRACTICE_SECONDS if room.practice else STAGE_SECONDS[room.stage])
     room.last_walk = room.t0
     room.last_chest = room.t0
 
     room.next_chest = len(room.world.chests)
     room.passersby = []
     for _ in range(room.world.n_passersby):
+        # a road full of identical random walkers reads as scenery; a mix of
+        # errands reads as a place where other people have business
+        kind = random.choices(
+            [Passerby.WANDER, Passerby.PILGRIM, Passerby.CUTPURSE, Passerby.SHY],
+            weights=[34, 30, 22, 14])[0]
         room.passersby.append(Passerby(room.next_npc, random.choice(room.world.floors),
-                                       random.randint(0, 40)))
+                                       random.randint(0, 40), kind))
         room.next_npc -= 1
 
     broadcast(room, F({"t": "n", "stage": stage_info(room),
@@ -303,14 +338,27 @@ def start_stage(room):
 def end_stage(room, now):
     for p in room.players.values():
         p.score = score_of(p)
-    ranked = sorted(room.players.values(), key=lambda p: -p.score)
+    # this is the sort that decides who goes through, so it is the tied one
+    ranked = sorted(room.players.values(), key=rank_key)
     room.history.append({"stage": room.stage, "name": STAGE_NAMES[room.stage],
                          "top": [[p.name, p.score, p.banked + p.money, round(p.best * 100)]
                                  for p in ranked[:10]]})
 
+    if room.practice:
+        room.phase = "done"
+        for p in ranked:
+            p.send(F({"t": "tourEnd", "champion": p.name, "practice": 1,
+                      "score": p.score, "money": p.banked + p.money,
+                      "prog": round(p.best * 100), "history": room.history}))
+        return
+
     nxt = room.stage + 1
     if nxt < len(STAGE_CAPS) and len(ranked) > 1:
         cut = STAGE_CAPS[nxt]
+        # a phone that never came back does not hold a place in the next round
+        present = [p for p in ranked if p.gone is None]
+        absent = [p for p in ranked if p.gone is not None]
+        ranked = present + absent
         qualifiers, out = ranked[:cut], ranked[cut:]
         for i, p in enumerate(out):
             p.send(F({"t": "eliminated", "rank": cut + i + 1, "score": p.score,
@@ -382,6 +430,38 @@ def on_say(p, text):
     broadcast_admins(room, F({"t": "adminSay", "n": p.name, "x": text}))
 
 
+def admin_control(adm, what, arg):
+    """The levers the organiser needs when a room of 300 is watching."""
+    room = adm.room
+    if room is None:
+        return
+    now = time.time()
+    if what == "start" and room.phase == "lobby" and room.players:
+        room.start_at = now
+        feed(room, "The organiser started the level")
+    elif what == "extend":
+        secs = max(-300, min(300, int(arg or 60)))
+        if room.phase == "play":
+            room.ends_at += secs
+            broadcast(room, F({"t": "ann",
+                               "x": ("%+d seconds on the clock" % secs)}))
+        elif room.phase == "lobby":
+            room.start_at = max(now, room.start_at + secs)
+    elif what == "end" and room.phase == "play":
+        room.ends_at = now                      # the tick ends the stage cleanly
+    elif what == "kick":
+        p = room.players.get(int(arg or 0))
+        if p:
+            p.send(F({"t": "err", "msg": "The organiser removed you from this tournament."}))
+            room.players.pop(p.id, None)
+            p.room = None
+            if not p.w.transport.is_closing():
+                p.w.transport.close()
+    adm.send(F({"t": "adminStage", "stage": stage_info(room), "phase": room.phase,
+                "startIn": max(0, round(room.start_at - now)),
+                "tl": max(0, int(room.ends_at - now)) if room.phase == "play" else 0}))
+
+
 def on_announce(adm, text):
     """The admin speaks to the whole tournament - a banner on every phone."""
     room = adm.room
@@ -425,7 +505,7 @@ def on_move(p, d, seq):
     # meeting anyone triggers the purse rule
     met = False
     for q in room.players.values():
-        if q is not p and q.t == nt:
+        if q is not p and q.gone is None and q.t == nt:
             r = do_loot(p, q)
             if r:
                 note_loot(r[0], -r[2], True)
@@ -476,6 +556,7 @@ def on_move(p, d, seq):
 
 def walk_passersby(room):
     wd = room.world
+    here = [(p.x, p.y, p) for p in room.players.values() if p.gone is None]
     for npc in room.passersby:
         opts = []
         for d, (dx, dy) in enumerate(DIRS):
@@ -484,11 +565,31 @@ def walk_passersby(room):
                 opts.append((d, nt))
         if not opts:
             continue
-        ahead = [o for o in opts if o[0] == npc.face]
-        d, nt = ahead[0] if (ahead and random.random() < 0.65) else random.choice(opts)
+
+        nx, ny = npc.t % wd.w, npc.t // wd.w
+        near = None
+        if npc.kind in (Passerby.CUTPURSE, Passerby.SHY) and here:
+            near = min(here, key=lambda e: abs(e[0] - nx) + abs(e[1] - ny))
+            if abs(near[0] - nx) + abs(near[1] - ny) > 9:
+                near = None
+
+        if near is not None:
+            # steer toward whoever is closest, or directly away from them
+            want = 1 if npc.kind == Passerby.CUTPURSE else -1
+            def toward(o):
+                ox, oy = o[1] % wd.w, o[1] // wd.w
+                return want * (abs(near[0] - ox) + abs(near[1] - oy))
+            d, nt = min(opts, key=toward) if random.random() < .8 else random.choice(opts)
+        elif npc.kind == Passerby.PILGRIM:
+            # keep going the way you were going, and pick a new heading rarely
+            ahead = [o for o in opts if o[0] == npc.face]
+            d, nt = ahead[0] if (ahead and random.random() < .88) else random.choice(opts)
+        else:
+            ahead = [o for o in opts if o[0] == npc.face]
+            d, nt = ahead[0] if (ahead and random.random() < 0.65) else random.choice(opts)
         npc.face, npc.t = d, nt
         for p in room.players.values():
-            if p.t == nt:
+            if p.gone is None and p.t == nt:
                 r = do_loot(p, npc)
                 if r:
                     note_loot(r[0], -r[2], False)
@@ -500,7 +601,7 @@ def walk_passersby(room):
 def broadcast_near(room):
     """Runners see only figures close by, and cannot tell who is who."""
     wd = room.world
-    ps = list(room.players.values())
+    ps = [q for q in room.players.values() if q.gone is None]   # away phones are not drawn
     # from the semi-final on, a rival close enough to see is close enough to name
     reveal = room.stage >= REVEAL_FROM_STAGE
     buckets = {}
@@ -535,7 +636,7 @@ def broadcast_near(room):
 
 def send_meta(room, now):
     reveal = room.stage >= REVEAL_FROM_STAGE
-    ps = sorted(room.players.values(), key=lambda p: -score_of(p))
+    ps = sorted(room.players.values(), key=rank_key)
     top = [[p.name if reveal else "Runner", score_of(p), p.banked + p.money, round(p.best * 100)]
            for p in ps[:8]]
     left = max(0, int(room.ends_at - now))
@@ -555,6 +656,7 @@ def lobby_msg(room):
 
 async def game_loop():
     last_meta = 0.0
+    last_snap = 0.0
     while True:
         await asyncio.sleep(TICK)
         now = time.time()
@@ -576,6 +678,7 @@ async def game_loop():
                 else:
                     broadcast(room, lobby_msg(room))
             elif room.phase == "play":
+                sweep_gone(room, time.monotonic())
                 if now - room.last_walk >= PASSERBY_INTERVAL:
                     room.last_walk = now
                     walk_passersby(room)
@@ -592,6 +695,113 @@ async def game_loop():
             for room in ROOMS.values():
                 if room.phase == "play" and room.players:
                     send_meta(room, now)
+
+        if now - last_snap >= SNAP_EVERY:
+            last_snap = now
+            save_snapshot()
+
+
+
+# ------------------------------------------------------------------ snapshots
+# A tournament lives in memory, so a crash or a restart would normally throw
+# away a room of 300 people mid-match. Every few seconds the essentials go to
+# disk: the room's clock, the seed its world was grown from, and each
+# runner's purse and position. On boot they come back marked as away, which
+# is exactly the state a dropped phone is in - so everyone simply reconnects
+# with the key their browser already holds, and carries on.
+SNAP_PATH = os.environ.get("GARDEN_SNAPSHOT", os.path.join(HERE, "garden-state.json"))
+SNAP_EVERY = 5.0
+SNAP_MAX_AGE = 900          # a snapshot older than this is stale; ignore it
+
+
+def snapshot():
+    rooms = []
+    for room in ROOMS.values():
+        if room.phase == "done" or not room.players:
+            continue
+        rooms.append({
+            "code": room.code, "stage": room.stage, "phase": room.phase,
+            "seed": room.seed, "start_at": room.start_at, "ends_at": room.ends_at,
+            "history": room.history, "champion": room.champion, "feed": room.feed[-12:],
+            "players": [{
+                "key": p.key, "name": p.name, "t": p.t, "money": p.money,
+                "banked": p.banked, "trips": p.trips, "fin": p.fin, "best": p.best,
+                "got": sorted(p.got), "face": p.face,
+            } for p in room.players.values()],
+        })
+    return {"at": time.time(), "rooms": rooms}
+
+
+def save_snapshot():
+    try:
+        tmp = SNAP_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(snapshot(), f)
+        os.replace(tmp, SNAP_PATH)     # atomic, so a crash never leaves a half file
+    except Exception:
+        pass
+
+
+def load_snapshot():
+    """Rebuild whatever was running when we stopped."""
+    global NEXT_ID
+    try:
+        with open(SNAP_PATH) as f:
+            snap = json.load(f)
+    except Exception:
+        return 0
+    if time.time() - snap.get("at", 0) > SNAP_MAX_AGE:
+        return 0
+    n = 0
+    for rs in snap.get("rooms", []):
+        try:
+            room = Room(rs["code"], rs["start_at"])
+            room.stage = rs["stage"]
+            room.phase = rs["phase"]
+            room.seed = rs["seed"]
+            room.ends_at = rs["ends_at"]
+            room.history = rs.get("history", [])
+            room.champion = rs.get("champion")
+            room.feed = rs.get("feed", [])
+            if room.phase == "play":
+                room.world = worldgen.World(room.stage, room.seed)
+                room.t0 = time.time()
+                room.last_walk = room.last_chest = time.time()
+                room.next_chest = len(room.world.chests)
+                for _ in range(room.world.n_passersby):
+                    kind = random.choices([0, 1, 2, 3], weights=[34, 30, 22, 14])[0]
+                    room.passersby.append(Passerby(room.next_npc,
+                                                   random.choice(room.world.floors),
+                                                   random.randint(0, 40), kind))
+                    room.next_npc -= 1
+            for ps in rs.get("players", []):
+                p = Player()
+                p.id, NEXT_ID = NEXT_ID, NEXT_ID + 1
+                p.w = None
+                p.room = room
+                p.name = ps["name"]
+                p.key = ps["key"]
+                p.seq = 0
+                p.money, p.banked, p.trips = ps["money"], ps["banked"], ps["trips"]
+                p.fin, p.best = ps["fin"], ps["best"]
+                p.got = set(ps.get("got", []))
+                p.face = ps.get("face", 2)
+                p.score = 0
+                p.tok, p.lm = 1.0, time.monotonic()
+                p.loot_cd = p.boat_cd = p.em_cd = p.chat_cd = 0.0
+                p.last_o = None
+                p.gone = time.monotonic()      # everyone is away until they reconnect
+                if room.world:
+                    place(p, ps["t"], room.world)
+                else:
+                    p.x = p.y = p.t = 0
+                room.players[p.id] = p
+            if room.players:
+                ROOMS[room.code] = room
+                n += 1
+        except Exception:
+            continue
+    return n
 
 
 # ------------------------------------------------------------------ joining
@@ -617,6 +827,9 @@ def new_player(w, name):
     p.boat_cd = 0.0
     p.em_cd = 0.0
     p.chat_cd = 0.0
+    # the key a dropped phone comes back with
+    p.key = base64.urlsafe_b64encode(os.urandom(12)).decode().rstrip("=")
+    p.gone = None
     return p
 
 
@@ -628,6 +841,9 @@ def cfg_msg():
 
 
 def join_room(p, room):
+    if room.practice:
+        p.send(F({"t": "err", "msg": "That code belongs to a practice run."}))
+        return False
     if room.stage != 0 or room.phase == "done":
         p.send(F({"t": "err", "msg": "This tournament has already moved past the first level."}))
         return False
@@ -636,7 +852,7 @@ def join_room(p, room):
         return False
     p.room = room
     room.players[p.id] = p
-    p.send(F({"t": "w", "id": p.id, "code": room.code, "ph": room.phase,
+    p.send(F({"t": "w", "id": p.id, "code": room.code, "ph": room.phase, "key": p.key,
               "stage": stage_info(room), "cfg": cfg_msg()}))
     if room.phase == "lobby":
         broadcast(room, lobby_msg(room))
@@ -646,6 +862,28 @@ def join_room(p, room):
                   "secs": max(1, int(room.ends_at - time.time())), **world_msg(room)}))
         p.send(pos_msg(p, True))
     return True
+
+
+def create_practice(p):
+    """A room of one, starting at once.
+
+    Nobody learns the purse rule from a lobby screen, and a fest is a poor
+    place to learn it for the first time. Practice is the real game - the
+    same world, the same chests, the same passersby - just alone, short,
+    and with nothing riding on it.
+    """
+    if len(ROOMS) >= MAX_ROOMS:
+        p.send(F({"t": "err", "msg": "Too many tournaments running right now."}))
+        return None
+    room = Room(gen_code(), time.time() + 2)
+    room.practice = True
+    ROOMS[room.code] = room
+    p.room = room
+    room.players[p.id] = p
+    p.send(F({"t": "w", "id": p.id, "code": room.code, "ph": room.phase, "key": p.key,
+              "stage": stage_info(room), "cfg": cfg_msg(), "practice": 1}))
+    broadcast(room, lobby_msg(room))
+    return room
 
 
 def create_room(p, delay):
@@ -659,11 +897,66 @@ def create_room(p, delay):
     return room
 
 
-def leave_room(p):
+def drop_socket(p, w):
+    """A phone went away.
+
+    Mid-round we keep the runner - their gold, their place, their score -
+    and simply stop showing them, because on fest wifi a dropped socket is
+    usually a pocket or a lock screen, not somebody leaving. They have
+    RESUME_GRACE seconds to come back to exactly where they were. In the
+    lobby there is nothing to preserve, so they just leave.
+    """
     room = p.room
-    if room and room.players.pop(p.id, None) and room.phase == "lobby":
+    if p.w is not w:
+        return                      # a newer socket already took this runner over
+    if room is None:
+        return
+    if room.phase == "lobby":
+        room.players.pop(p.id, None)
+        p.room = None
         broadcast(room, lobby_msg(room))
-    p.room = None
+        return
+    p.gone = time.monotonic()
+    p.last_o = None
+
+
+def resume_player(w, code, key):
+    """Bring a dropped runner back to exactly where they left off."""
+    room = ROOMS.get(str(code or "").strip().upper())
+    if room is None:
+        w.write(F({"t": "err", "msg": "That tournament is no longer running."}))
+        return None
+    for p in room.players.values():
+        if p.key == key:
+            old = p.w
+            p.w = w
+            p.gone = None
+            p.last_o = None
+            p.lm = time.monotonic()
+            p.tok = 1.0
+            if old is not None and old is not w and not old.transport.is_closing():
+                old.transport.close()     # the stale socket goes
+            p.send(F({"t": "w", "id": p.id, "code": room.code, "ph": room.phase, "key": p.key,
+                      "stage": stage_info(room), "cfg": cfg_msg(), "resumed": 1}))
+            if room.phase == "play" and room.world:
+                p.send(F({"t": "n", "stage": stage_info(room),
+                          "secs": max(1, int(room.ends_at - time.time())), **world_msg(room)}))
+                p.send(pos_msg(p, True))
+                p.send(F({"t": "banked", "added": 0, "bank": p.banked, "trips": p.trips}))
+                for line in room.feed[-6:]:
+                    p.send(F({"t": "feed", "x": line}))
+            else:
+                p.send(lobby_msg(room))
+            return p
+    w.write(F({"t": "err", "msg": "We could not find your place in that tournament."}))
+    return None
+
+
+def sweep_gone(room, now):
+    """Runners who never came back are let go once their grace is up."""
+    for p in [q for q in room.players.values() if q.gone and now - q.gone > RESUME_GRACE]:
+        room.players.pop(p.id, None)
+        p.room = None
 
 
 def join_admin(w, code):
@@ -739,8 +1032,13 @@ async def ws_session(r, w, headers):
                             p = None
                         elif not join_room(p, room):
                             p = None
+                    elif m.get("mode") == "practice":
+                        if create_practice(p) is None:
+                            p = None
                     elif create_room(p, m.get("delay")) is None:
                         p = None
+                elif t == "resume":
+                    p = resume_player(w, m.get("code"), str(m.get("key") or ""))
                 elif t == "admin":
                     adm = join_admin(w, str(m.get("code") or "").strip().upper())
                 continue
@@ -756,11 +1054,13 @@ async def ws_session(r, w, headers):
                 on_say(p, m.get("x"))
             elif adm and t == "ann":
                 on_announce(adm, m.get("x"))
+            elif adm and t == "ctl":
+                admin_control(adm, str(m.get("k") or ""), m.get("v"))
     except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, ValueError, OSError):
         pass
     finally:
         if p:
-            leave_room(p)
+            drop_socket(p, w)
         if adm and adm.room:
             adm.room.admins.discard(adm)
         w.close()
@@ -768,7 +1068,9 @@ async def ws_session(r, w, headers):
 
 PAGES = {"/": "index.html", "/index.html": "index.html", "/admin": "admin.html",
          "/painted.js": "painted.js",
-         "/atlas.js": "atlas.js"}
+         "/atlas.js": "atlas.js",
+         "/qr.js": "qr.js",
+         "/board": "board.html"}
 TYPES = {".html": b"text/html; charset=utf-8", ".js": b"application/javascript; charset=utf-8"}
 
 
@@ -813,11 +1115,16 @@ def lan_ip():
 
 
 async def main():
+    restored = load_snapshot()
     server = await asyncio.start_server(handle, HOST, PORT, backlog=2048)
     asyncio.create_task(game_loop())
     ip = lan_ip()
     print("THE LAST GARDEN   ->  http://%s:%d   (local: http://localhost:%d)" % (ip, PORT, PORT))
     print("Admin aerial view ->  http://%s:%d/admin" % (ip, PORT))
+    print("Big screen        ->  http://%s:%d/board?code=CODE" % (ip, PORT))
+    if restored:
+        print("Restored %d tournament(s) from the last snapshot - runners can reconnect."
+              % restored)
     async with server:
         await server.serve_forever()
 

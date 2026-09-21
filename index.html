@@ -7,7 +7,7 @@
 <style>
 :root{
   --navy:#0d1a2b; --navy2:#152a40; --gold:#d9b667; --gold2:#f2d89a; --goldDim:#9e8449;
-  --ink:#f2e9d6; --dim:#9fb0b8; --leaf:#5fbb56; --bad:#e2596f; --safe:env(safe-area-inset-bottom,0px)
+  --ink:#f2e9d6; --dim:#9fb0b8; --leaf:#5fbb56; --bad:#e2596f; --safe:env(safe-area-inset-bottom,0px); --safe-t:env(safe-area-inset-top,0px)
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;background:#0a1410;color:var(--ink);font:14px/1.4 system-ui,"Segoe UI",Roboto,sans-serif;overflow:hidden;user-select:none;-webkit-user-select:none;touch-action:none}
@@ -23,6 +23,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 .hud{position:fixed;pointer-events:none;z-index:2}
 
 #top{left:12px;top:12px;padding:11px 16px;display:flex;flex-direction:column;gap:2px;min-width:190px}
+#topBar,#lbBtn{display:none}
 #top b{font:700 17px Georgia,"Iowan Old Style",serif;color:var(--gold2);letter-spacing:.4px;
   text-shadow:0 1px 6px rgba(217,182,103,.35)}
 #top .row{font-size:12.5px;color:var(--dim)}
@@ -67,19 +68,40 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
   pointer-events:none;display:none;z-index:3}
 #banner small{display:block;font:400 14px system-ui;color:var(--ink);margin-top:7px;text-shadow:0 2px 8px #000}
 
-#viewbtn{position:fixed;right:12px;bottom:calc(122px + var(--safe));z-index:3;padding:11px 16px;
+#viewbtn{position:fixed;right:12px;bottom:calc(var(--padH) + 24px + var(--safe));z-index:3;padding:11px 16px;
   font:700 12px system-ui;letter-spacing:.5px;color:#1a1204;
   background:linear-gradient(180deg,var(--gold2),var(--gold));border:1px solid #8a7038;
   border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.5);cursor:pointer}
+/* One number drives the whole bottom of the screen: the pad's cell size.
+   Everything that has to clear the pad is measured from --padH. */
+:root{--pad:70px;--padGap:8px;--padH:calc(var(--pad)*2 + var(--padGap))}
 #pad{position:fixed;left:50%;bottom:calc(14px + var(--safe));transform:translateX(-50%);
-  display:grid;grid-template-columns:repeat(3,64px);grid-template-rows:repeat(2,64px);gap:7px;z-index:3}
+  display:grid;grid-template-columns:repeat(3,var(--pad));grid-template-rows:repeat(2,var(--pad));
+  gap:var(--padGap);z-index:3;touch-action:none}
 #pad button{background:linear-gradient(180deg,rgba(24,44,66,.92),rgba(10,20,32,.94));
-  border:1px solid var(--goldDim);border-radius:14px;color:var(--gold2);font-size:23px;font-weight:700;
-  box-shadow:0 3px 12px rgba(0,0,0,.45)}
-#pad button:active{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1204}
+  border:1px solid var(--goldDim);border-radius:16px;color:var(--gold2);
+  font-size:calc(var(--pad)*.40);font-weight:700;line-height:1;
+  box-shadow:0 3px 14px rgba(0,0,0,.5);touch-action:none;-webkit-tap-highlight-color:transparent}
+#pad button:active{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1204;
+  transform:scale(.95)}
 
 /* ---- the match ticker, bottom left, out of the thumbs' way */
-#feed{position:fixed;left:10px;bottom:calc(152px + var(--safe));z-index:3;width:min(58vw,300px);
+#teach{position:fixed;left:50%;top:22%;transform:translateX(-50%) scale(.94);z-index:7;
+  width:min(88vw,340px);padding:16px 18px;border-radius:14px;opacity:0;pointer-events:none;
+  display:flex;flex-direction:column;gap:9px;transition:opacity .22s ease,transform .22s ease;
+  background:linear-gradient(180deg,rgba(14,30,44,.97),rgba(7,16,26,.98));
+  border:1px solid var(--gold);box-shadow:0 14px 44px rgba(0,0,0,.66)}
+#teach.on{opacity:1;transform:translateX(-50%) scale(1);pointer-events:auto}
+#teach b{font:700 16px Georgia,serif;color:var(--gold2)}
+#teach span{font:400 13.5px/1.55 system-ui;color:var(--ink)}
+#teach button{align-self:flex-end;padding:8px 18px;border-radius:8px;cursor:pointer;
+  font:700 12px system-ui;color:#1a1204;
+  background:linear-gradient(180deg,var(--gold2),var(--gold));border:1px solid #8a7038}
+.ghost{width:100%;margin-top:9px;padding:11px;border-radius:10px;cursor:pointer;
+  font:600 13px system-ui;color:var(--gold2);background:rgba(255,255,255,.05);
+  border:1px dashed var(--goldDim)}
+.ghost:active{background:rgba(242,178,63,.18)}
+#feed{position:fixed;left:10px;bottom:calc(var(--padH) + 56px + var(--safe));z-index:3;width:min(58vw,300px);
   display:flex;flex-direction:column;gap:4px;pointer-events:none}
 #feed div{font:600 11.5px system-ui;color:#d8e6d2;padding:5px 9px;border-radius:7px;
   background:linear-gradient(180deg,rgba(10,22,16,.80),rgba(6,14,10,.86));
@@ -88,7 +110,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 @keyframes feedin{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
 
 /* ---- talk */
-#talk{position:fixed;left:12px;bottom:calc(14px + var(--safe));z-index:5}
+#talk{position:fixed;left:12px;bottom:calc(var(--padH) - 42px + var(--safe));z-index:5}
 #talkbtn{width:56px;height:56px;border-radius:999px;font-size:25px;line-height:1;cursor:pointer;
   background:linear-gradient(180deg,rgba(24,44,66,.94),rgba(10,20,32,.96));
   border:1px solid var(--goldDim);box-shadow:0 3px 12px rgba(0,0,0,.45)}
@@ -169,11 +191,49 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 #champList li{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;
   border-bottom:1px solid rgba(217,182,103,.16);color:var(--dim)}
 #champList li:first-child{color:var(--gold2);font-weight:700}
+/* ---------------------------------------------------------------- phones
+   The screen belongs to the garden and to your thumbs. The stats collapse
+   to the only two numbers that matter mid-run - where you are placed, and
+   how long is left - and the rest is one tap away. */
 @media (max-width:620px){
-  #top{padding:8px 11px;min-width:0}#top b{font-size:14px}#top .row{font-size:11px}
-  #lb{min-width:0;width:158px;padding:8px 10px}#lb li{font-size:11px}
+  :root{--pad:76px;--padGap:9px}
+  #top{left:8px;top:calc(8px + var(--safe-t));padding:0;min-width:0;pointer-events:auto}
+  #topBar{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;
+    background:none;border:0;color:var(--ink);font:inherit}
+  #rankMini{font:800 19px Georgia,serif;color:var(--gold2);letter-spacing:.3px;line-height:1}
+  #timeMini{font:700 15px system-ui;color:var(--ink);font-variant-numeric:tabular-nums;line-height:1}
+  #timeMini.low{color:#ff9db0}
+  #topChev{font-size:11px;color:var(--goldDim);transition:transform .18s ease}
+  #top.open #topChev{transform:rotate(180deg)}
+  #topMore{display:none;padding:0 12px 10px;border-top:1px solid rgba(217,182,103,.18);
+    margin-top:2px;padding-top:8px}
+  #top.open #topMore{display:block}
+  #topMore b{font-size:14px}#topMore .row{font-size:11.5px}
+
+  /* standings are a tap, not a permanent panel */
+  #lbBtn{display:block;position:fixed;right:8px;top:calc(8px + var(--safe-t));z-index:4;
+    padding:9px 13px;border-radius:999px;font:700 11.5px system-ui;letter-spacing:.4px;
+    color:var(--gold2);cursor:pointer;
+    background:linear-gradient(180deg,rgba(24,44,66,.92),rgba(10,20,32,.94));
+    border:1px solid var(--goldDim);box-shadow:0 3px 12px rgba(0,0,0,.45)}
+  #lbBtn.on{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1204}
+  #lb{display:none;right:8px;top:calc(54px + var(--safe-t));width:min(66vw,230px);padding:9px 12px}
+  #lb.on{display:block}
+  #lb li{font-size:12px;padding:4px 0}
+
   #banner{font-size:22px}
   .sheet{padding:20px}.sheet h1{font-size:26px}
+  #mini{display:none}                     /* the map button does this job */
+}
+/* a small phone keeps the big pad and gives up width elsewhere */
+@media (max-width:380px){
+  :root{--pad:72px}
+  #lb{width:min(72vw,210px)}
+}
+/* short screens (a phone in landscape) cannot afford a tall pad */
+@media (max-height:520px){
+  :root{--pad:56px;--padGap:6px}
+  #feed{display:none}
 }
 @media (prefers-reduced-motion:reduce){#toast div{animation:none}}
 </style>
@@ -181,14 +241,25 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 <body>
 <canvas id="g"></canvas>
 
-<div id="top" class="hud panel"><b id="stageName">The Last Garden</b>
-  <div class="row" id="timer"></div>
-  <div class="row">Carrying <span id="gold">0</span> · Banked <span id="bankAmt">0</span></div>
-  <div class="row" id="rank"></div>
-  <div class="row" id="dist"></div>
+<!-- On a phone the stats collapse to rank and time left; everything else
+     is one tap away. On a larger screen the full panel is always open. -->
+<div id="top" class="hud panel">
+  <button id="topBar" type="button" aria-expanded="false" aria-controls="topMore">
+    <span id="rankMini">-</span>
+    <span id="timeMini">-</span>
+    <span id="topChev" aria-hidden="true">▾</span>
+  </button>
+  <div id="topMore">
+    <b id="stageName">The Last Garden</b>
+    <div class="row" id="timer"></div>
+    <div class="row">Carrying <span id="gold">0</span> · Banked <span id="bankAmt">0</span></div>
+    <div class="row" id="rank"></div>
+    <div class="row" id="dist"></div>
+  </div>
 </div>
 
-<div id="lb" class="hud panel"><h4 id="lbTitle">STANDINGS</h4><ol id="lbl"></ol><div class="foot" id="lbFoot">Names stay hidden until the Temple.</div></div>
+<button id="lbBtn" type="button" aria-controls="lb" aria-expanded="false">☰ Standings</button>
+<div id="lb" class="hud panel"><h4 id="lbTitle">STANDINGS</h4><ol id="lbl"></ol><div class="foot" id="lbFoot">Names stay hidden until the semi-final.</div></div>
 
 <canvas id="mini"></canvas>
 <div id="toast"></div>
@@ -196,6 +267,9 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 <button id="viewbtn" type="button">Map view</button>
 <!-- the match ticker: what is happening elsewhere in the garden -->
 <div id="feed" aria-live="polite"></div>
+
+<!-- shown once each, the first time a rule actually bites -->
+<div id="teach"></div>
 
 <!-- talk: six taps everyone can use, and open chat once the final starts -->
 <div id="talk">
@@ -238,6 +312,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
   </div>
   <div id="paneJoin" class="pane"><input id="code" maxlength="6" placeholder="ABCXYZ" autocomplete="off"></div>
   <button id="go" class="big" type="button">Enter the garden</button>
+  <button id="practice" class="ghost" type="button">Try it alone first — 90 seconds, nothing at stake</button>
   <p id="err"></p>
   <div class="rules">
     <b>Bank your gold</b> — carry it to the idol and it is safe for good and counts in full. Gold still in your hands counts half and can be taken.<br>
@@ -272,7 +347,11 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 <script src="atlas.js"></script>
 <script>
 'use strict';
-const SERVER = new URLSearchParams(location.search).get('server') || '';
+const QS = new URLSearchParams(location.search);
+const SERVER = QS.get('server') || '';
+// A QR on the big screen lands people here with the tournament already
+// chosen, so all that is left to do is type a name.
+const PRESET = (QS.get('code') || '').trim().toUpperCase();
 const $ = id => document.getElementById(id);
 const DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
 
@@ -289,6 +368,7 @@ let cw = 0, ch = 0, dpr = 1;
 let W = 0, H = 0, grid = null, goal = 0, gx = 0, gy = 0, level = 0, stage = null;
 let chests = new Map(), others = new Map(), docks = [], boats = [];
 let me = { id: 0 }, px = 0, py = 0, seq = 0, lastMove = 0, facing = 2;
+let stageSecs = 0, isPractice = false;
 let gold = 0, bankAmt = 0, banked = false, finished = false, phase = 'lobby', joined = false, name = '', MI = 110;
 let mode = 'create', delay = 30, roomCode = '', joinCode = '';
 let view = 0;                      // 0 = first person, 1 = over the shoulder, 2 = whole map
@@ -300,7 +380,9 @@ let goldFlash = 0, badFlash = 0, boatFlash = 0;
 let miniLayer = null;
 
 // camera
-let camX = 0, camY = 0;
+let camX = 0, camY = 0, leadX = 0, leadY = 0;
+let selfX = 0, selfY = 0;   // your own drawn position, eased off the tile you occupy
+const LOOKAHEAD = 1.15;    // tiles the view leans ahead of you while walking
 const chunks = new Map();          // painted tile cache, keyed by chunk
 
 // ---------- helpers
@@ -514,6 +596,9 @@ function drawTopDown(now, whole) {
   const x0 = Math.max(0, Math.floor(-ox / T)), x1 = Math.min(W - 1, Math.ceil((cw - ox) / T));
   const y0 = Math.max(0, Math.floor(-oy / T)), y1 = Math.min(H - 1, Math.ceil((ch - oy) / T));
 
+  // the moving surface of the water, over the baked chunks
+  if (!whole) PAINT.paintWaterLive(ctx, grid, W, H, x0, x1, y0, y1, ox, oy, T, P, t);
+
   // live light from the shrines, over the baked chunks
   if (!whole) {
     for (let y = y0; y <= y1; y++) {
@@ -560,7 +645,7 @@ function drawTopDown(now, whole) {
                    name: o.name, face: o.face,
                    moving: Math.abs(o.x - o.dx) + Math.abs(o.y - o.dy) > .015 });
   }
-  figures.push({ x: camX - .5, y: camY - .5, me: true, id: me.id,
+  figures.push({ x: selfX, y: selfY, me: true, id: me.id,
                  face: facing, moving: held.length > 0 });
   figures.sort((a, b) => a.y - b.y);
 
@@ -608,25 +693,58 @@ function glow(x, y, r, rgb, a) {
  * It is two rectangles of work, and it does more for how the garden feels
  * than anything else in this file.
  */
+/**
+ * The light moves while you play. Each level has a light it opens in and a
+ * light it closes in, and the grade walks between them as the clock runs
+ * down - so a three-minute match feels like part of a day rather than a
+ * fixed tableau. It also tells you, without a glance at the timer, that
+ * time is going.
+ */
 const GRADE = [
-  { warm: 'rgba(255,206,120,.07)', cool: 'rgba(24,60,104,.09)', vig: 'rgba(8,24,12,.50)' },
-  { warm: 'rgba(214,180,124,.05)', cool: 'rgba(54,74,64,.12)', vig: 'rgba(18,22,14,.56)' },
-  { warm: 'rgba(255,170,70,.09)', cool: 'rgba(36,18,54,.12)', vig: 'rgba(6,3,0,.64)' },
+  // The Forest: mid-morning into low golden afternoon
+  { dawn: { a: [255, 226, 150, .08], b: [ 30,  74, 120, .09], v: [ 8, 24, 12, .40] },
+    dusk: { a: [255, 150,  48, .34], b: [ 30,  36,  92, .30], v: [10, 14, 30, .68] },
+    late: [58, 40, 92, .20] },
+  // The Ruins: overcast grey-green souring toward storm light
+  { dawn: { a: [216, 190, 140, .06], b: [ 54,  74,  64, .11], v: [18, 22, 14, .48] },
+    dusk: { a: [190, 130,  80, .26], b: [ 38,  46,  58, .34], v: [10, 12, 16, .70] },
+    late: [40, 44, 58, .22] },
+  // The Temple: torchlit throughout, deepening as the braziers take over
+  { dawn: { a: [255, 184,  90, .09], b: [ 40,  22,  58, .11], v: [ 6,  4,  2, .54] },
+    dusk: { a: [255, 138,  36, .32], b: [ 22,   8,  40, .32], v: [ 2,  0,  0, .78] },
+    late: [30, 10, 44, .26] },
 ];
+let dayT = 0;                    // 0 at the start of the level, 1 at the end
+
+function lerpRGBA(a, b, t) {
+  return `rgba(${Math.round(a[0] + (b[0] - a[0]) * t)},${Math.round(a[1] + (b[1] - a[1]) * t)},` +
+         `${Math.round(a[2] + (b[2] - a[2]) * t)},${(a[3] + (b[3] - a[3]) * t).toFixed(3)})`;
+}
+
 function grade() {
   const G = GRADE[level] || GRADE[0];
+  const t = dayT * dayT * (3 - 2 * dayT);          // ease, so the turn is gradual
   ctx.save();
   ctx.globalCompositeOperation = 'soft-light';
   const wash = ctx.createLinearGradient(0, 0, cw * .6, ch);
-  wash.addColorStop(0, G.warm);
-  wash.addColorStop(1, G.cool);
+  wash.addColorStop(0, lerpRGBA(G.dawn.a, G.dusk.a, t));
+  wash.addColorStop(1, lerpRGBA(G.dawn.b, G.dusk.b, t));
   ctx.fillStyle = wash; ctx.fillRect(0, 0, cw, ch);
   ctx.restore();
 
-  const vg = ctx.createRadialGradient(cw / 2, ch * .46, Math.min(cw, ch) * .32,
+  // In the last third the light actually goes: a flat cool tint over
+  // everything, so you can feel the clock without reading it.
+  if (G.late && t > .62) {
+    const k = (t - .62) / .38;
+    const L = G.late;
+    ctx.fillStyle = `rgba(${L[0]},${L[1]},${L[2]},${(L[3] * k).toFixed(3)})`;
+    ctx.fillRect(0, 0, cw, ch);
+  }
+
+  const vg = ctx.createRadialGradient(cw / 2, ch * .46, Math.min(cw, ch) * (.34 - t * .10),
                                       cw / 2, ch / 2, Math.max(cw, ch) * .74);
   vg.addColorStop(0, 'rgba(0,0,0,0)');
-  vg.addColorStop(1, G.vig);
+  vg.addColorStop(1, lerpRGBA(G.dawn.v, G.dusk.v, t));
   ctx.fillStyle = vg; ctx.fillRect(0, 0, cw, ch);
 }
 
@@ -670,13 +788,46 @@ function drawMini(t) {
 // ================================================================ networking
 let ws, hb;
 const send = o => { if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); };
+/**
+ * On fest wifi a socket drops for all sorts of dull reasons - a locked
+ * phone, a walk past a thick wall, a switch to WhatsApp and back. None of
+ * those should cost anyone their run, so once we hold a resume key we come
+ * back as the same runner rather than joining as a new one. The server
+ * keeps your gold and your place for a couple of minutes.
+ */
+let resumeKey = '', tries = 0, reconnecting = false;
+try { resumeKey = localStorage.getItem('garden_key') || ''; } catch (e) {}
+
 function connect() {
   const base = SERVER ? (SERVER.startsWith('ws') ? SERVER : 'ws://' + SERVER)
                       : (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-  ws = new WebSocket(base);
-  ws.onopen = () => { send({ t: 'hi', name, mode, delay, code: joinCode }); clearInterval(hb); hb = setInterval(() => send({ t: 'pg' }), 20000); };
+  let sock;
+  try { sock = new WebSocket(base); } catch (e) { retry(); return; }
+  ws = sock;
+  ws.onopen = () => {
+    tries = 0;
+    if (resumeKey && roomCode) send({ t: 'resume', code: roomCode, key: resumeKey });
+    else send({ t: 'hi', name, mode, delay, code: joinCode });
+    clearInterval(hb); hb = setInterval(() => send({ t: 'pg' }), 20000);
+  };
   ws.onmessage = e => handle(JSON.parse(e.data));
-  ws.onclose = () => { joined = false; setTimeout(connect, 1600); };
+  ws.onclose = () => {
+    joined = false;
+    clearInterval(hb);
+    if (resumeKey && roomCode) retry();
+    else if (roomCode) retry();
+  };
+  ws.onerror = () => {};
+}
+
+function retry() {
+  // back off, but never so far that someone is stuck staring at a dead screen
+  const wait = Math.min(6000, 700 * Math.pow(1.7, tries++));
+  if (!reconnecting) {
+    reconnecting = true;
+    banner('Reconnecting<small>Your gold and your place are being held</small>');
+  }
+  setTimeout(connect, wait);
 }
 
 function handle(m) {
@@ -686,9 +837,17 @@ function handle(m) {
       if (m.cfg && typeof m.cfg.revealFrom === 'number') revealFrom = m.cfg.revealFrom;
       me.id = m.id; roomCode = m.code; MI = m.cfg.mi; joined = true;
       mode = 'join'; joinCode = roomCode;
+      if (m.key) { resumeKey = m.key; try { localStorage.setItem('garden_key', m.key); } catch (e) {} }
       setStage(m.stage);
       $('login').style.display = 'none';
+      if (reconnecting) {
+        reconnecting = false;
+        banner('');
+        toast(m.resumed ? 'Back in - nothing was lost' : 'Reconnected', 'good');
+      }
+      isPractice = !!m.practice;
       if (m.ph === 'lobby') { $('wait').style.display = 'flex'; $('codeShow').textContent = roomCode; }
+      else ['wait'].forEach(id => $(id).style.display = 'none');
       break;
     case 'lobby':
       roomCode = m.code; $('codeShow').textContent = roomCode;
@@ -697,6 +856,12 @@ function handle(m) {
       $('waitTitle').textContent = m.stage.idx > 0 ? 'Next: ' + m.stage.name : 'Get ready';
       break;
     case 'err':
+      if (reconnecting) {
+        reconnecting = false; banner('');
+        resumeKey = ''; roomCode = '';
+        try { localStorage.removeItem('garden_key'); } catch (e) {}
+        $('login').style.display = 'flex';
+      }
       $('err').textContent = m.msg; $('err').style.display = 'block';
       if (ws) { ws.onclose = null; ws.close(); }
       joined = false; $('wait').style.display = 'none'; $('login').style.display = 'flex';
@@ -748,6 +913,17 @@ function handle(m) {
       $('elim').style.display = 'flex'; beep(420, 160, .45, 'triangle', .05);
       break;
     case 'tourEnd':
+      if (m.practice) {
+        $('champTitle').textContent = 'Practice over';
+        $('champMsg').textContent =
+          `You scored ${m.score}, banked and carried ${m.money} gold, and got ` +
+          `${m.prog}% of the way to the idol. Reload to join a real tournament.`;
+        $('champList').textContent = '';
+        $('champ').style.display = 'flex';
+        phase = 'done';
+        beep(523, 784, .35, 'triangle', .06);
+        break;
+      }
       $('champTitle').textContent = m.champion ? m.champion + ' reaches the idol first' : 'Tournament over';
       $('champMsg').textContent = 'Final standings:';
       const cl = $('champList'); cl.textContent = '';
@@ -789,18 +965,19 @@ function onLevelStart(m) {
   setChatEnabled(m.stage.idx === 2);
   ATLAS.clear();                     // sprites are baked per level and per size
   gold = 0; bankAmt = 0; banked = false; finished = false; phase = 'play';
+  stageSecs = m.secs || 180; dayT = 0;
   $('gold').textContent = '0'; $('bankAmt').textContent = '0';
   ['wait', 'elim', 'champ'].forEach(id => $(id).style.display = 'none');
   banner('');
   buildMini(); chunks.clear(); wholeCvs = null;
-  toast(m.stage.name + ' — find the idol');
+  toast((isPractice ? 'Practice \u2014 ' : '') + m.stage.name + ' \u2014 find the idol');
   beep(392, 587, .3, 'triangle', .05);
 }
 
 function onPos(m) {
   const jump = m.f || m.boat;
   px = m.x; py = m.y;
-  if (jump) { camX = px + .5; camY = py + .5; }
+  if (jump) { camX = px + .5; camY = py + .5; selfX = px; selfY = py; leadX = leadY = 0; }
   if (typeof m.face === 'number') facing = m.face;
   gold = m.money; bankAmt = m.bank || 0; banked = bankAmt > 0;
   $('gold').textContent = gold; $('bankAmt').textContent = bankAmt;
@@ -808,12 +985,31 @@ function onPos(m) {
     ? (banked ? '<span id="banked">All safe \u2713</span> · go gather more'
               : `${m.prog}% there · ${m.left} steps to the idol`)
     : `${m.left} steps to the idol · carried gold is at risk, and worth half`;
-  if (m.boat) { toast('The ferry carries you across', 'boat'); boatFlash = 1; beep(220, 440, .5, 'sine', .06); }
+  if (m.boat) {
+    toast('The ferry carries you across', 'boat'); boatFlash = 1;
+    beep(220, 440, .5, 'sine', .06);
+    teach('ferry', 'Ferry landings',
+      'Stepping onto a jetty sails you to its partner across the map. Much faster than walking \u2014 look for the little boats.');
+  }
+  checkNearDock();
   if (m.fin && !finished) {
     finished = true;
     banner('You reached the idol<small>That gold is safe. Go gather more and run it back.</small>');
     setTimeout(() => { if (phase === 'play') banner(''); }, 4200);
     [523, 659, 784, 1046].forEach((f, i) => beep(f, f * 1.01, .28, 'triangle', .06, i * .09));
+  }
+}
+
+/** A nudge when a jetty is within a step or two, because nothing else says so. */
+let dockHint = 0;
+function checkNearDock() {
+  if (!boats.length || performance.now() - dockHint < 15000) return;
+  for (const b of boats) {
+    if (Math.abs(b.x - px) + Math.abs(b.y - py) === 1) {
+      dockHint = performance.now();
+      toast('A ferry landing \u2014 step on to sail across', 'boat');
+      return;
+    }
   }
 }
 
@@ -858,17 +1054,43 @@ function onChest(m) {
   beep(880, 1320, .16, 'triangle', .05);
 }
 
+/** Shown once, the first time the purse rule actually happens to you. */
+function teach(key, title, body) {
+  try { if (localStorage.getItem('garden_t_' + key)) return; } catch (e) {}
+  try { localStorage.setItem('garden_t_' + key, '1'); } catch (e) {}
+  const el = $('teach');
+  el.innerHTML = '';
+  const h = document.createElement('b'); h.textContent = title;
+  const p = document.createElement('span'); p.textContent = body;
+  const x = document.createElement('button'); x.type = 'button'; x.textContent = 'Got it';
+  x.addEventListener('click', () => el.classList.remove('on'));
+  el.append(h, p, x);
+  el.classList.add('on');
+  setTimeout(() => el.classList.remove('on'), 9000);
+}
+
 function onLoot(m) {
   gold = m.money; $('gold').textContent = gold;
   const gained = m.d > 0;
   pops.push({ text: (gained ? '+' : '') + m.d, t: performance.now(), good: gained });
   if (gained) { toast('They carried more — you took ' + m.d + ' gold', 'good'); goldFlash = 1; beep(740, 990, .18, 'triangle', .05); }
-  else { toast('You carried more — lost ' + (-m.d) + ' gold', 'bad'); badFlash = 1; beep(330, 120, .3, 'sawtooth', .05); }
+  else {
+    toast('You carried more \u2014 lost ' + (-m.d) + ' gold', 'bad'); badFlash = 1;
+    beep(330, 120, .3, 'sawtooth', .05);
+    teach('purse', 'The purse rule',
+      'Whoever carries less takes a cut from whoever carries more. Carrying a lot makes you a target \u2014 run it to the idol, where it is safe and counts double.');
+  }
 }
 
 function onMeta(m) {
   $('timer').textContent = m.tl > 0 ? 'Time left ' + fmt(m.tl) : 'Level ending…';
-  $('rank').textContent = `#${m.rk} of ${m.n} · ${m.sc} pts`;
+  $('rank').textContent = `#${m.rk} of ${m.n} \u00b7 ${m.sc} pts`;
+  // the two numbers that stay on screen on a phone
+  $('rankMini').textContent = `#${m.rk}/${m.n}`;
+  if (stageSecs > 0) dayT = Math.max(0, Math.min(1, 1 - m.tl / stageSecs));
+  const tm = $('timeMini');
+  tm.textContent = m.tl > 0 ? fmt(m.tl) : '0:00';
+  tm.classList.toggle('low', m.tl > 0 && m.tl <= 30);
   const ol = $('lbl'); ol.textContent = '';
   m.lb.forEach(([n, sc], i) => {
     const li = document.createElement('li');
@@ -882,6 +1104,26 @@ function onMeta(m) {
   });
 }
 
+
+// ================================================================ HUD
+// On a phone the stats collapse to rank and time left. Both panels
+// remember whether you left them open.
+const topEl = $('top'), topBar = $('topBar'), lbEl = $('lb'), lbBtn = $('lbBtn');
+topBar.addEventListener('click', () => {
+  const on = topEl.classList.toggle('open');
+  topBar.setAttribute('aria-expanded', on ? 'true' : 'false');
+  try { localStorage.setItem('garden_stats', on ? '1' : ''); } catch (e) {}
+});
+lbBtn.addEventListener('click', () => {
+  const on = lbEl.classList.toggle('on');
+  lbBtn.classList.toggle('on', on);
+  lbBtn.setAttribute('aria-expanded', on ? 'true' : 'false');
+  try { localStorage.setItem('garden_lb', on ? '1' : ''); } catch (e) {}
+});
+try {
+  if (localStorage.getItem('garden_stats')) { topEl.classList.add('open'); topBar.setAttribute('aria-expanded', 'true'); }
+  if (localStorage.getItem('garden_lb')) { lbEl.classList.add('on'); lbBtn.classList.add('on'); }
+} catch (e) {}
 
 // ================================================================ talk
 // Three ways to speak, in rising order of how much they can go wrong:
@@ -1035,8 +1277,19 @@ function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   tryMove(now);
 
-  // smooth the camera onto the tile you occupy, and turn to face your heading
-  const tx = px + .5, ty = py + .5;
+  // Smooth the camera onto the tile you occupy, leaning a little the way
+  // you are heading so you can see what is coming rather than what you
+  // have already walked past.
+  const moving = held.length > 0;
+  const aimX = moving ? DX[facing] * LOOKAHEAD : 0;
+  const aimY = moving ? DY[facing] * LOOKAHEAD : 0;
+  leadX += (aimX - leadX) * Math.min(1, dt * 3.2);
+  leadY += (aimY - leadY) * Math.min(1, dt * 3.2);
+  // your figure slides between tiles rather than snapping, same as everyone else
+  if (Math.abs(selfX - px) + Math.abs(selfY - py) > 4) { selfX = px; selfY = py; }
+  selfX += (px - selfX) * Math.min(1, dt * 13);
+  selfY += (py - selfY) * Math.min(1, dt * 13);
+  const tx = px + .5 + leadX, ty = py + .5 + leadY;
   camX += (tx - camX) * Math.min(1, dt * 11);
   camY += (ty - camY) * Math.min(1, dt * 11);
 
@@ -1107,8 +1360,21 @@ function start() {
   connect();
 }
 $('go').onclick = start;
+$('practice').addEventListener('click', () => {
+  name = $('nm').value.trim() || 'You';
+  try { localStorage.setItem('garden_name', name); } catch (e) {}
+  mode = 'practice';
+  $('err').style.display = 'none';
+  beep(392, 587, .2, 'triangle', .04);
+  connect();
+});
 $('nm').addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
 $('code').addEventListener('keydown', e => { if (e.key === 'Enter') start(); });
+if (/^[A-Z0-9]{6}$/.test(PRESET)) {
+  setTab('join');
+  $('code').value = PRESET;
+  $('joinHint') && ($('joinHint').textContent = 'Tournament ' + PRESET + ' \u2014 just add your name');
+}
 $('nm').focus();
 requestAnimationFrame(frame);
 </script>

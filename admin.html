@@ -29,6 +29,13 @@ td.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120p
 td.val{text-align:right;color:var(--gold);font-weight:700;white-space:nowrap}
 td.sub{text-align:right;color:var(--dim);font-size:11px;white-space:nowrap}
 .fin{color:var(--leaf)}
+#ctls{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}
+#ctls button,#ctls a{padding:8px 12px;border-radius:7px;font:700 11.5px system-ui;cursor:pointer;
+  color:var(--gold2);text-decoration:none;display:inline-block;
+  background:linear-gradient(180deg,rgba(24,44,66,.92),rgba(10,20,32,.94));
+  border:1px solid var(--goldDim)}
+#ctls button:active{background:linear-gradient(180deg,#ffd873,#f2b23f);color:#1a1204}
+#ctls .warn{border-color:#a04a5c;color:#ffc2cd}
 #annRow{display:flex;gap:6px;margin-bottom:5px}
 #annIn{flex:1;min-width:0;padding:8px 10px;border-radius:7px;font:500 13px system-ui;
   background:rgba(255,255,255,.07);border:1px solid rgba(220,200,150,.24);color:#eef4fa}
@@ -74,6 +81,15 @@ td.sub{text-align:right;color:var(--dim);font-size:11px;white-space:nowrap}
       <span><i class="dot" style="background:#5c3b1e"></i>Ferry</span>
       <span><i class="dot" style="background:#3f86b8"></i>Water</span>
     </div>
+    <h2>Controls</h2>
+    <div id="ctls">
+      <button data-k="start" type="button">Start now</button>
+      <button data-k="extend" data-v="60" type="button">+60s</button>
+      <button data-k="extend" data-v="-60" type="button">−60s</button>
+      <button data-k="end" type="button" class="warn">End level</button>
+      <a id="boardLink" target="_blank" rel="noopener">Big screen ↗</a>
+    </div>
+
     <h2>Speak to the tournament</h2>
     <div id="annRow">
       <input id="annIn" maxlength="120" placeholder="e.g. Match 2 starts in 2 minutes" autocomplete="off">
@@ -206,6 +222,7 @@ function handle(m) {
     case 'err': $('status').textContent = m.msg; break;
     case 'adminHi':
       $('status').textContent = 'watching ' + m.code;
+      $('boardLink').href = '/board?code=' + m.code;
       $('stageTag').textContent = m.stage.name + ' · cap ' + m.stage.cap + ' · ' + m.phase;
       renderHist(m.history);
       if (m.champion) { $('champHead').style.display = 'block'; $('champ').textContent = m.champion; }
@@ -271,6 +288,13 @@ function announce() {
   ws.send(JSON.stringify({ t: 'ann', x: v }));
   $('annIn').value = '';
 }
+document.querySelectorAll('#ctls button').forEach(b => {
+  b.addEventListener('click', () => {
+    if (!ws || ws.readyState !== 1) return;
+    if (b.dataset.k === 'end' && !confirm('End this level now for everyone?')) return;
+    ws.send(JSON.stringify({ t: 'ctl', k: b.dataset.k, v: +(b.dataset.v || 0) }));
+  });
+});
 $('annGo').addEventListener('click', announce);
 $('annIn').addEventListener('keydown', e => { if (e.key === 'Enter') announce(); });
 </script>
