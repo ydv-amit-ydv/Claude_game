@@ -155,30 +155,59 @@ const PAINT = (() => {
         let edges = 0;
         if (!inW(x, y - 1)) edges++; if (!inW(x + 1, y)) edges++;
         if (!inW(x, y + 1)) edges++; if (!inW(x - 1, y)) edges++;
-        const deep = edges === 0;
-        const g = c.createLinearGradient(sx, sy, sx, sy + T);
-        g.addColorStop(0, deep ? P.water[0] : P.water[1]);
-        g.addColorStop(1, deep ? P.water[1] : P.water[2]);
-        c.fillStyle = g; c.fillRect(sx, sy, T + 1, T + 1);
+        // How open the water is around this tile, counted over a 5x5 patch.
+        // Using it as a smooth depth - rather than two or three hard bands -
+        // is what stops a pond looking like a chequerboard of blue squares.
+        let open = 0;
+        for (let j = -2; j <= 2; j++)
+          for (let i = -2; i <= 2; i++)
+            if (inW(x + i, y + j)) open++;
+        const depth = Math.min(1, Math.max(0, (open - 7) / 16));
+        const ring = depth > .72 ? 2 : depth > .34 ? 1 : 0;
+        // shallow -> mid -> deep, blended rather than stepped
+        const base = depth < .5
+          ? mixHex(P.water[2], P.water[1], depth * 2)
+          : mixHex(P.water[1], P.water[0], (depth - .5) * 2);
+        c.fillStyle = base;
+        c.fillRect(sx, sy, T + 1, T + 1);
+        // the bed showing through where it is shallowest
+        if (depth < .42) {
+          c.globalAlpha = (.42 - depth) * .8;
+          c.fillStyle = mixHex(P.water[2], '#b9a878', .55);
+          c.fillRect(sx, sy, T + 1, T + 1);
+          c.globalAlpha = 1;
+        }
         if (T < 12) continue;
-        // moving glitter
-        c.fillStyle = 'rgba(220,245,255,.30)';
-        for (let i = 0; i < 2; i++) {
-          const hx = h2(x * 7 + i, y, 53), hy = h2(x, y * 7 + i, 59);
-          const wob = Math.sin(t * 1.6 + hx * 9 + x) * .12;
-          c.fillRect(sx + (hx * .7 + .12 + wob) * T, sy + (hy * .7 + .12) * T, T * .22, Math.max(1, T * .045));
-        }
-        // foam where it laps the bank
-        if (edges) {
-          c.strokeStyle = P.foam; c.globalAlpha = .45 + .2 * Math.sin(t * 2.2 + x + y);
-          c.lineWidth = Math.max(1.5, T * .1);
+
+        // ---- ripples, drawn in world coordinates so they run on across
+        // tile boundaries instead of stopping dead at every seam
+        c.save();
+        c.beginPath(); c.rect(sx, sy, T + 1, T + 1); c.clip();
+        c.lineCap = 'round';
+        for (let i = -1; i <= 1; i++) {
+          const wy = (y + i) * T + oy;
+          const phase = (y + i) * 1.7 + t * .8;
+          c.strokeStyle = `rgba(226,248,255,${ring === 2 ? .10 : .16})`;
+          c.lineWidth = Math.max(1, T * .05);
           c.beginPath();
-          if (!inW(x, y - 1)) { c.moveTo(sx, sy + 1); c.lineTo(sx + T, sy + 1); }
-          if (!inW(x, y + 1)) { c.moveTo(sx, sy + T - 1); c.lineTo(sx + T, sy + T - 1); }
-          if (!inW(x - 1, y)) { c.moveTo(sx + 1, sy); c.lineTo(sx + 1, sy + T); }
-          if (!inW(x + 1, y)) { c.moveTo(sx + T - 1, sy); c.lineTo(sx + T - 1, sy + T); }
-          c.stroke(); c.globalAlpha = 1;
+          for (let k = 0; k <= 4; k++) {
+            const px = sx - T * .1 + (k / 4) * T * 1.2;
+            const py = wy + T * (.42 + Math.sin(phase + (x + k / 4) * 2.1) * .16);
+            k ? c.lineTo(px, py) : c.moveTo(px, py);
+          }
+          c.stroke();
         }
+        // a broken band of sun on the surface
+        if (h2(x, y, 67) > .58) {
+          c.strokeStyle = 'rgba(255,252,226,.26)';
+          c.lineWidth = Math.max(1, T * .07);
+          c.beginPath();
+          c.moveTo(sx + T * .18, sy + T * .30);
+          c.quadraticCurveTo(sx + T * .5, sy + T * .22, sx + T * .82, sy + T * .34);
+          c.stroke();
+        }
+        c.restore();
+
         // round off the outer corners so the bank is not a staircase of squares
         const land = P.grass[0];
         const corner = (ax, ay, cxp, cyp) => {
@@ -201,7 +230,7 @@ const PAINT = (() => {
         c.restore();
 
         // koi drifting under the surface
-        if (deep && h2(x, y, 501) > .82) {
+        if (ring === 2 && h2(x, y, 501) > .82) {
           const ph = t * .5 + h2(x, y, 503) * 6.283;
           const kx = sx + T * (.5 + Math.cos(ph) * .28), ky = sy + T * (.5 + Math.sin(ph * 1.3) * .22);
           c.save(); c.globalAlpha = .55;
@@ -217,7 +246,7 @@ const PAINT = (() => {
           c.restore();
         }
         // cattails standing in the shallows
-        if (!deep && h2(x, y, 511) > .74) {
+        if (ring === 0 && h2(x, y, 511) > .74) {
           const rx = sx + T * (.25 + h2(x, y, 513) * .5);
           c.strokeStyle = '#4e8a44'; c.lineWidth = Math.max(1, T * .035);
           for (let i = 0; i < 3; i++) {
@@ -231,7 +260,7 @@ const PAINT = (() => {
           }
         }
         // lily pads
-        if (deep && h2(x, y, 67) > .78) {
+        if (ring === 2 && h2(x, y, 67) > .78) {
           const px = sx + T * .5 + Math.sin(t * .6 + x) * T * .05, py = sy + T * .5;
           c.fillStyle = 'rgba(28,70,36,.45)';
           c.beginPath(); c.ellipse(px + T * .04, py + T * .06, T * .3, T * .2, 0, 0, TAU); c.fill();
@@ -252,73 +281,180 @@ const PAINT = (() => {
 
   // ---------------------------------------------------------------- hedges
   /** an extruded hedge block: cast shadow, dark face, lit crown, blossoms */
+  /**
+   * A stretch of hedge. The crown is rounded only at corners that are
+   * genuinely exposed, so a run of hedge reads as one continuous wall
+   * rather than a row of separate green pillows - which is the single
+   * biggest thing that used to make the garden look like a board game.
+   */
   function paintHedge(c, x, y, sx, sy, T, D, P, grid, W, H) {
-    const openS = !(y + 1 < H) || grid[(y + 1) * W + x] !== WALL;
+    const at = (xx, yy) => (xx < 0 || yy < 0 || xx >= W || yy >= H) ? WALL : grid[yy * W + xx];
+    const N = at(x, y - 1) === WALL, S = at(x, y + 1) === WALL;
+    const E = at(x + 1, y) === WALL, Wl = at(x - 1, y) === WALL;
     const n = h2(x, y, 13);
+    const r = T * .30;
+    // a corner is only rounded where both of its sides are open air
+    const rNW = (N || Wl) ? 0 : r, rNE = (N || E) ? 0 : r;
+    const rSE = (S || E) ? 0 : r, rSW = (S || Wl) ? 0 : r;
 
-    if (openS) {                                    // shadow thrown onto the path below
-      c.fillStyle = 'rgba(22,44,26,.30)';
-      c.beginPath();
-      c.ellipse(sx + T * .52, sy + T + D * .18, T * .58, T * .22, 0, 0, TAU);
-      c.fill();
-    }
-    // the side face, only where it would actually be seen
-    if (openS) {
-      const g = c.createLinearGradient(sx, sy + T - D, sx, sy + T);
-      g.addColorStop(0, P.hedgeMid); g.addColorStop(1, P.hedgeSide);
+    const top = sy - D;
+    // ---- the shadow this wall throws, down and to the right of the sun
+    if (!S) {
+      const g = c.createLinearGradient(0, sy + T, 0, sy + T + D * .8);
+      g.addColorStop(0, 'rgba(18,38,22,.42)');
+      g.addColorStop(1, 'rgba(18,38,22,0)');
       c.fillStyle = g;
-      roundRect(c, sx, sy + T - D, T + 1, D + 1, T * .12); c.fill();
+      c.fillRect(sx + T * .1, sy + T, T + 1, D * .8);
     }
-    // the crown
-    const top = sy - D + (openS ? 0 : 0);
-    const g2 = c.createLinearGradient(sx, top, sx + T * .6, top + T);
-    g2.addColorStop(0, P.hedgeRim); g2.addColorStop(.35, P.hedgeLit);
-    g2.addColorStop(1, P.hedgeMid);
-    c.fillStyle = g2;
-    roundRect(c, sx, top, T + 1, T + 1, T * .22); c.fill();
-    if (T < 13) return;
-    const variety = h2(x, y, 301);
-    if (variety > .88) {                       // clipped topiary along the top of the hedge
-      for (let i = 0; i < 2; i++) {
-        const bx = sx + T * (.3 + i * .4), by = top + T * .34;
-        const g3 = c.createRadialGradient(bx - T * .06, by - T * .08, T * .02, bx, by, T * .2);
-        g3.addColorStop(0, P.hedgeRim); g3.addColorStop(1, P.hedgeDark);
-        c.fillStyle = g3;
-        c.beginPath(); c.arc(bx, by, T * .19, 0, TAU); c.fill();
+    if (!E) {
+      const g = c.createLinearGradient(sx + T, 0, sx + T + D * .5, 0);
+      g.addColorStop(0, 'rgba(18,38,22,.30)');
+      g.addColorStop(1, 'rgba(18,38,22,0)');
+      c.fillStyle = g;
+      c.fillRect(sx + T, sy + D * .2, D * .5, T);
+    }
+
+    // ---- the face of the wall, seen below the crown
+    if (!S) {
+      const g = c.createLinearGradient(0, sy + T - D, 0, sy + T + 1);
+      g.addColorStop(0, P.hedgeMid);
+      g.addColorStop(.55, P.hedgeSide);
+      g.addColorStop(1, shadeHex(P.hedgeSide, .30));
+      c.fillStyle = g;
+      corners(c, sx, sy + T - D, T + 1, D + 1, 0, 0, rSE, rSW); c.fill();
+      // twigs and leaf ends poking out of the cut face
+      for (let i = 0; i < 6; i++) {
+        const hx = h2(x * 7 + i, y, 53);
+        c.fillStyle = hx > .5 ? P.hedgeDark : shadeHex(P.hedgeSide, .16);
+        c.globalAlpha = .6;
+        c.beginPath();
+        c.ellipse(sx + hx * T, sy + T - D * (.2 + h2(x, y + i, 59) * .6),
+                  T * .09, T * .06, hx * 3, 0, TAU);
+        c.fill();
       }
-    }
-    // leaf clumps, lit from the upper left
-    for (let i = 0; i < 5; i++) {
-      const hx = h2(x * 9 + i, y, 17), hy = h2(x, y * 9 + i, 19);
-      const r = T * (.1 + hx * .09);
-      c.fillStyle = hy > .55 ? P.leaf : P.hedgeDark;
-      c.globalAlpha = .55;
-      c.beginPath(); c.arc(sx + hx * T * .84 + T * .08, top + hy * T * .84 + T * .08, r, 0, TAU); c.fill();
       c.globalAlpha = 1;
     }
-    // a bright edge along the top so rows read as separate walls
-    c.strokeStyle = 'rgba(200,245,150,.34)'; c.lineWidth = Math.max(1, T * .05);
-    c.beginPath(); c.moveTo(sx + T * .1, top + T * .07); c.lineTo(sx + T * .9, top + T * .07); c.stroke();
-    // blossoms
-    if (n > .48) {
+
+    // ---- the crown, lit from the upper left
+    const g2 = c.createLinearGradient(sx, top, sx + T * .8, top + T);
+    g2.addColorStop(0, P.hedgeRim);
+    g2.addColorStop(.32, P.hedgeLit);
+    g2.addColorStop(.78, P.hedgeMid);
+    g2.addColorStop(1, P.hedgeDark);
+    c.fillStyle = g2;
+    corners(c, sx, top, T + 1, T + 1, rNW, rNE, rSE, rSW); c.fill();
+
+    if (T < 13) return;
+
+    // ---- leaf texture: many small dabs, dense and lit on the sun side
+    c.save();
+    corners(c, sx, top, T + 1, T + 1, rNW, rNE, rSE, rSW); c.clip();
+    const dabs = Math.max(8, Math.round(T * .42));
+    for (let i = 0; i < dabs; i++) {
+      const hx = h2(x * 9 + i, y, 17), hy = h2(x, y * 9 + i, 19), hv = h2(x + i, y + i, 23);
+      const lx = sx + hx * (T + 2) - 1, ly = top + hy * (T + 2) - 1;
+      const rr = T * (.07 + hv * .08);
+      // a dab is lit if it sits up-left within its own neighbourhood
+      const up = (1 - hx) * .5 + (1 - hy) * .5;
+      c.fillStyle = up > .72 ? P.hedgeRim : up > .5 ? P.hedgeLit
+                  : up > .3 ? P.hedgeMid : P.hedgeDark;
+      c.globalAlpha = .38 + hv * .34;
+      c.beginPath();
+      c.ellipse(lx, ly, rr, rr * .78, hv * 3, 0, TAU);
+      c.fill();
+    }
+    c.globalAlpha = 1;
+
+    // clipped topiary balls, here and there along the top of a wall
+    if (h2(x, y, 301) > .90) {
+      for (let i = 0; i < 2; i++) {
+        const bx = sx + T * (.3 + i * .4), by = top + T * .36;
+        const g3 = c.createRadialGradient(bx - T * .07, by - T * .09, T * .02, bx, by, T * .22);
+        g3.addColorStop(0, P.hedgeRim); g3.addColorStop(.6, P.hedgeLit); g3.addColorStop(1, P.hedgeDark);
+        c.fillStyle = g3;
+        c.beginPath(); c.arc(bx, by, T * .20, 0, TAU); c.fill();
+      }
+    }
+
+    // ambient darkening where this tile meets a neighbouring wall, so a
+    // long run still shows the seams between its sections
+    c.fillStyle = 'rgba(16,34,20,.16)';
+    if (N) c.fillRect(sx, top, T + 1, T * .07);
+    if (Wl) c.fillRect(sx, top, T * .07, T + 1);
+    c.restore();
+
+    // ---- the sunlit ridge along the top edge
+    if (!N) {
+      c.strokeStyle = 'rgba(214,250,166,.40)';
+      c.lineWidth = Math.max(1, T * .055);
+      c.beginPath();
+      c.moveTo(sx + (Wl ? 0 : r * .8), top + T * .055);
+      c.lineTo(sx + T - (E ? 0 : r * .8), top + T * .055);
+      c.stroke();
+    }
+
+    // ---- flowering hedge, and vines spilling over an exposed face
+    if (n > .52) {
       const cols = P.blossom, k = (h2(x, y, 29) * cols.length) | 0;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         const hx = h2(x * 3 + i, y * 5, 37), hy = h2(x * 5, y * 3 + i, 39);
-        if (hx < .3) continue;
-        const bx = sx + hx * T * .8 + T * .1, by = top + hy * T * .8 + T * .1, br = T * .075;
-        c.fillStyle = cols[(k + i) % cols.length];
-        for (let p = 0; p < 5; p++) {
-          const a = p / 5 * TAU;
-          c.beginPath(); c.arc(bx + Math.cos(a) * br * 1.15, by + Math.sin(a) * br * 1.15, br, 0, TAU); c.fill();
-        }
-        c.fillStyle = '#fbe38a';
-        c.beginPath(); c.arc(bx, by, br * .8, 0, TAU); c.fill();
+        if (hx < .22) continue;
+        bloomAt(c, sx + hx * T * .84 + T * .08, top + hy * T * .84 + T * .08,
+                T * .085, cols[(k + i) % cols.length]);
+      }
+    }
+    if (!S && n > .70) {
+      c.strokeStyle = 'rgba(96,150,74,.85)';
+      c.lineWidth = Math.max(1, T * .045);
+      for (let i = 0; i < 3; i++) {
+        const vx = sx + T * (.2 + i * .3 + h2(x, y + i, 61) * .1);
+        c.beginPath();
+        c.moveTo(vx, sy + T - D);
+        c.quadraticCurveTo(vx + T * .07, sy + T - D * .4, vx - T * .04, sy + T * .98);
+        c.stroke();
+        c.fillStyle = 'rgba(120,176,92,.9)';
+        c.beginPath(); c.ellipse(vx + T * .05, sy + T - D * .5, T * .055, T * .035, .6, 0, TAU); c.fill();
       }
     }
   }
 
+  /** A rounded rectangle with a radius chosen per corner. */
+  function corners(c, x, y, w, h, nw, ne, se, sw) {
+    c.beginPath();
+    c.moveTo(x + nw, y);
+    c.lineTo(x + w - ne, y); if (ne) c.quadraticCurveTo(x + w, y, x + w, y + ne);
+    c.lineTo(x + w, y + h - se); if (se) c.quadraticCurveTo(x + w, y + h, x + w - se, y + h);
+    c.lineTo(x + sw, y + h); if (sw) c.quadraticCurveTo(x, y + h, x, y + h - sw);
+    c.lineTo(x, y + nw); if (nw) c.quadraticCurveTo(x, y, x + nw, y);
+    c.closePath();
+  }
 
-  /** a five-petal bloom, used all over the garden */
+  function mixHex(a, b, t) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const r = Math.round((pa >> 16) + ((pb >> 16) - (pa >> 16)) * t);
+    const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * t);
+    const bl = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * t);
+    return '#' + ((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1);
+  }
+
+  function shadeHex(a, t) {
+    const pa = parseInt(a.slice(1), 16), pb = 0x111a20;
+    const r = Math.round((pa >> 16) + ((pb >> 16) - (pa >> 16)) * t);
+    const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * t);
+    const b = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * t);
+    return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
+  }
+
+  function bloomAt(c, x, y, r, col) {
+    for (let p = 0; p < 5; p++) {
+      const a = p / 5 * TAU;
+      c.fillStyle = p % 2 ? col : col;
+      c.beginPath(); c.arc(x + Math.cos(a) * r * 1.1, y + Math.sin(a) * r * 1.1, r * .92, 0, TAU); c.fill();
+    }
+    c.fillStyle = '#fbe38a';
+    c.beginPath(); c.arc(x, y, r * .8, 0, TAU); c.fill();
+  }
+
   function bloom(c, x, y, r, col, centre) {
     c.fillStyle = col;
     for (let p = 0; p < 5; p++) {

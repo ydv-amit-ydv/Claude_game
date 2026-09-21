@@ -31,14 +31,22 @@ HOST, PORT = "0.0.0.0", int(os.environ.get("PORT", 8000))
 MOVE_INTERVAL = 0.11
 TICK = 0.1
 PASSERBY_INTERVAL = 0.5
-INTERMISSION = 20
-MIN_DELAY, MAX_DELAY = 10, 3600
+INTERMISSION = int(os.environ.get("GARDEN_INTERMISSION", 20))
+MIN_DELAY, MAX_DELAY = int(os.environ.get("GARDEN_MIN_DELAY", 10)), 3600
 ROOM_IDLE_TTL = 240
 MAX_ROOMS = 200
 
 STAGE_NAMES = [lv["name"] for lv in worldgen.LEVELS]
 STAGE_CAPS = [300, 50, 10]
-STAGE_SECONDS = [180, 180, 240]
+STAGE_SECONDS = [int(v) for v in os.environ.get("GARDEN_STAGE_SECONDS", "180,180,240").split(",")]
+REVEAL_FROM_STAGE = 1     # names stay hidden in the opening heat, shown from the semi-final on
+
+# ---- talk
+EMOTES = ["\U0001F44B", "\U0001F602", "\U0001F631", "\U0001F4B0", "\U0001F3C3", "\U0001F64F"]
+EMOTE_COOLDOWN = 1.2
+CHAT_COOLDOWN = 2.5
+CHAT_MAX = 120
+FEED_KEEP = 40
 
 CHEST_RESPAWN = 22.0      # seconds between fresh chests appearing
 BONUS_PER_ARRIVAL = 3     # rich chests released each time someone reaches the idol
@@ -72,7 +80,7 @@ class Passerby:
 class Player:
     __slots__ = ("id", "name", "w", "room", "x", "y", "t", "seq", "tok", "lm", "face",
                  "money", "banked", "trips", "score", "fin", "got", "best", "last_o",
-                 "loot_cd", "boat_cd")
+                 "loot_cd", "boat_cd", "em_cd", "chat_cd")
 
     def send(self, frame):
         tr = self.w.transport
@@ -108,6 +116,7 @@ class Room:
         self.last_chest = 0.0
         self.empty_since = None
         self.history = []
+        self.feed = []
         self.champion = None
         self.next_npc = -1
         self.next_chest = 0
@@ -154,7 +163,7 @@ def gen_code():
 
 def stage_info(room):
     return {"idx": room.stage, "name": STAGE_NAMES[room.stage], "cap": STAGE_CAPS[room.stage],
-            "reveal": 1 if room.stage == len(STAGE_NAMES) - 1 else 0}
+            "reveal": 1 if room.stage >= REVEAL_FROM_STAGE else 0}
 
 
 def world_msg(room):
@@ -209,6 +218,8 @@ def reset_player(room, p):
     p.last_o = None
     p.loot_cd = 0.0
     p.boat_cd = 0.0
+    p.em_cd = 0.0
+    p.chat_cd = 0.0
     p.best = room.world.progress(p.t)
     p.score = 0
 
@@ -263,6 +274,7 @@ def spawn_chests(room, count, bonus=False):
 
 # ------------------------------------------------------------------ stages
 def start_stage(room):
+    room.feed = []
     room.world = worldgen.World(room.stage, random.getrandbits(48))
     room.phase = "play"
     room.t0 = time.time()
@@ -322,6 +334,66 @@ def end_stage(room, now):
                               "history": room.history, "champion": room.champion}))
 
 
+# ------------------------------------------------------------------ talk
+def near_players(room, x, y, radius=VIEW_RADIUS):
+    for q in room.players.values():
+        if abs(q.x - x) <= radius and abs(q.y - y) <= radius:
+            yield q
+
+
+def who(room, p):
+    """A runner's public name: anonymous until the semi-final."""
+    return p.name if room.stage >= REVEAL_FROM_STAGE else "someone"
+
+
+def feed(room, text):
+    """A line for the match ticker - everyone sees it, nobody is named early."""
+    room.feed.append(text)
+    del room.feed[:-FEED_KEEP]
+    broadcast(room, F({"t": "feed", "x": text}))
+    broadcast_admins(room, F({"t": "adminFeed", "x": text}))
+
+
+def on_emote(p, idx):
+    room = p.room
+    now = time.monotonic()
+    if room is None or room.phase != "play" or now < p.em_cd:
+        return
+    p.em_cd = now + EMOTE_COOLDOWN
+    msg = F({"t": "em", "id": p.id, "e": idx})
+    for q in near_players(room, p.x, p.y):
+        q.send(msg)
+
+
+def on_say(p, text):
+    """Open talk is for the final, where everyone already has a name."""
+    room = p.room
+    now = time.monotonic()
+    if room is None or room.stage < len(STAGE_NAMES) - 1:
+        p.send(F({"t": "sayErr", "msg": "Open talk opens in the final."}))
+        return
+    if now < p.chat_cd:
+        return
+    text = " ".join(str(text).split())[:CHAT_MAX]
+    if not text:
+        return
+    p.chat_cd = now + CHAT_COOLDOWN
+    broadcast(room, F({"t": "say", "n": p.name, "x": text}))
+    broadcast_admins(room, F({"t": "adminSay", "n": p.name, "x": text}))
+
+
+def on_announce(adm, text):
+    """The admin speaks to the whole tournament - a banner on every phone."""
+    room = adm.room
+    if room is None:
+        return
+    text = " ".join(str(text).split())[:CHAT_MAX]
+    if not text:
+        return
+    broadcast(room, F({"t": "ann", "x": text}))
+    broadcast_admins(room, F({"t": "adminSay", "n": "Organiser", "x": text}))
+
+
 # ------------------------------------------------------------------ movement
 def on_move(p, d, seq):
     room = p.room
@@ -358,6 +430,9 @@ def on_move(p, d, seq):
             if r:
                 note_loot(r[0], -r[2], True)
                 note_loot(r[1], r[2], True)
+                if r[2] >= 10:
+                    feed(room, "%s took %d gold from %s" %
+                         (who(room, r[1]), r[2], who(room, r[0])))
             met = True
             break
     if not met:
@@ -391,8 +466,11 @@ def on_move(p, d, seq):
             # the idol thanks each delivery by scattering rich chests for everyone
             spawn_chests(room, BONUS_PER_ARRIVAL if first else 1, bonus=True)
             p.send(F({"t": "banked", "added": dropped, "bank": p.banked, "trips": p.trips}))
+            if dropped:
+                feed(room, "%s laid %d gold at the idol" % (who(room, p), dropped))
         if first:
             broadcast(room, F({"t": "reached", "id": p.id}))
+            feed(room, "%s reached the idol" % who(room, p))
     p.send(pos_msg(p))
 
 
@@ -423,12 +501,15 @@ def broadcast_near(room):
     """Runners see only figures close by, and cannot tell who is who."""
     wd = room.world
     ps = list(room.players.values())
+    # from the semi-final on, a rival close enough to see is close enough to name
+    reveal = room.stage >= REVEAL_FROM_STAGE
     buckets = {}
     for e in ps:
-        buckets.setdefault((e.x >> 3, e.y >> 3), []).append((e.id, e.x, e.y))
+        buckets.setdefault((e.x >> 3, e.y >> 3), []).append(
+            (e.id, e.x, e.y, e.name if reveal else ""))
     for npc in room.passersby:
         x, y = npc.t % wd.w, npc.t // wd.w
-        buckets.setdefault((x >> 3, y >> 3), []).append((npc.id, x, y))
+        buckets.setdefault((x >> 3, y >> 3), []).append((npc.id, x, y, ""))
 
     span = (VIEW_RADIUS >> 3) + 1
     for p in ps:
@@ -436,9 +517,9 @@ def broadcast_near(room):
         near = []
         for i in range(bx - span, bx + span + 1):
             for j in range(by - span, by + span + 1):
-                for (eid, ex, ey) in buckets.get((i, j), ()):
+                for (eid, ex, ey, enm) in buckets.get((i, j), ()):
                     if eid != p.id and abs(ex - p.x) <= VIEW_RADIUS and abs(ey - p.y) <= VIEW_RADIUS:
-                        near.append([eid, ex, ey])
+                        near.append([eid, ex, ey, enm])
                         if len(near) >= VIEW_MAX:
                             break
         if near != p.last_o:
@@ -453,7 +534,7 @@ def broadcast_near(room):
 
 
 def send_meta(room, now):
-    reveal = room.stage == len(STAGE_NAMES) - 1
+    reveal = room.stage >= REVEAL_FROM_STAGE
     ps = sorted(room.players.values(), key=lambda p: -score_of(p))
     top = [[p.name if reveal else "Runner", score_of(p), p.banked + p.money, round(p.best * 100)]
            for p in ps[:8]]
@@ -534,11 +615,14 @@ def new_player(w, name):
     p.lm = time.monotonic()
     p.loot_cd = 0.0
     p.boat_cd = 0.0
+    p.em_cd = 0.0
+    p.chat_cd = 0.0
     return p
 
 
 def cfg_msg():
-    return {"mi": int(MOVE_INTERVAL * 1000), "view": VIEW_RADIUS,
+    return {"mi": int(MOVE_INTERVAL * 1000), "view": VIEW_RADIUS, "emotes": EMOTES,
+            "revealFrom": REVEAL_FROM_STAGE,
             "stages": [{"name": STAGE_NAMES[i], "cap": STAGE_CAPS[i], "secs": STAGE_SECONDS[i]}
                        for i in range(len(STAGE_NAMES))]}
 
@@ -664,6 +748,14 @@ async def ws_session(r, w, headers):
                 d, s = m.get("d"), m.get("s")
                 if type(d) is int and 0 <= d < 4 and type(s) is int:
                     on_move(p, d, s)
+            elif p and t == "em":
+                e = m.get("e")
+                if type(e) is int and 0 <= e < len(EMOTES):
+                    on_emote(p, e)
+            elif p and t == "say":
+                on_say(p, m.get("x"))
+            elif adm and t == "ann":
+                on_announce(adm, m.get("x"))
     except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, ValueError, OSError):
         pass
     finally:
@@ -675,7 +767,8 @@ async def ws_session(r, w, headers):
 
 
 PAGES = {"/": "index.html", "/index.html": "index.html", "/admin": "admin.html",
-         "/painted.js": "painted.js"}
+         "/painted.js": "painted.js",
+         "/atlas.js": "atlas.js"}
 TYPES = {".html": b"text/html; charset=utf-8", ".js": b"application/javascript; charset=utf-8"}
 
 

@@ -29,6 +29,17 @@ td.name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:120p
 td.val{text-align:right;color:var(--gold);font-weight:700;white-space:nowrap}
 td.sub{text-align:right;color:var(--dim);font-size:11px;white-space:nowrap}
 .fin{color:var(--leaf)}
+#annRow{display:flex;gap:6px;margin-bottom:5px}
+#annIn{flex:1;min-width:0;padding:8px 10px;border-radius:7px;font:500 13px system-ui;
+  background:rgba(255,255,255,.07);border:1px solid rgba(220,200,150,.24);color:#eef4fa}
+#annGo{padding:8px 13px;border-radius:7px;font:700 12px system-ui;color:#1a1204;cursor:pointer;
+  background:linear-gradient(180deg,#ffd873,#f2b23f);border:1px solid #8a7038}
+#annHint{margin:0 0 4px;font-size:11px;opacity:.6}
+#afeed{max-height:190px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;
+  font:500 12px system-ui;color:#cfe0d8}
+#afeed div{padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.04);
+  border-left:2px solid rgba(242,178,63,.55)}
+#afeed .said{color:#ffd98a;border-left-color:#ffd98a}
 #hist div{font-size:12px;color:var(--dim);margin-bottom:9px;padding-bottom:9px;border-bottom:1px dashed var(--line);line-height:1.7}
 #hist b{color:var(--ink)}
 #legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11.5px;color:var(--dim);margin-top:10px}
@@ -63,6 +74,16 @@ td.sub{text-align:right;color:var(--dim);font-size:11px;white-space:nowrap}
       <span><i class="dot" style="background:#5c3b1e"></i>Ferry</span>
       <span><i class="dot" style="background:#3f86b8"></i>Water</span>
     </div>
+    <h2>Speak to the tournament</h2>
+    <div id="annRow">
+      <input id="annIn" maxlength="120" placeholder="e.g. Match 2 starts in 2 minutes" autocomplete="off">
+      <button id="annGo" type="button">Send</button>
+    </div>
+    <p id="annHint">Appears as a banner on every runner's phone.</p>
+
+    <h2>Match feed</h2>
+    <div id="afeed"></div>
+
     <h2>Stage history</h2>
     <div id="hist"></div>
     <h2 id="champHead" style="display:none">Champion</h2>
@@ -208,6 +229,8 @@ function handle(m) {
       $('timeTag').textContent = m.n + ' racing · ' + m.tl + 's left';
       renderLb(m.lb);
       break;
+    case 'adminFeed': pushAFeed(m.x); break;
+    case 'adminSay': pushAFeed(m.n + ': ' + m.x, true); break;
     case 'adminStage':
       $('stageTag').textContent = m.stage.name + ' · cap ' + m.stage.cap + ' · ' + m.phase;
       renderHist(m.history);
@@ -225,6 +248,31 @@ $('go').onclick = () => {
 $('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
 const q = new URLSearchParams(location.search).get('code');
 if (q) { $('code').value = q; $('go').click(); }
+</script>
+<script>
+// ---- the organiser's channel: a banner on every phone, and a live feed
+const afeed = [];
+function pushAFeed(text, said) {
+  afeed.push({ text, said });
+  if (afeed.length > 60) afeed.shift();
+  const el = $('afeed');
+  el.textContent = '';
+  for (const l of afeed.slice(-18)) {
+    const d = document.createElement('div');
+    if (l.said) d.className = 'said';
+    d.textContent = l.text;
+    el.appendChild(d);
+  }
+  el.scrollTop = el.scrollHeight;
+}
+function announce() {
+  const v = $('annIn').value.trim();
+  if (!v || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ t: 'ann', x: v }));
+  $('annIn').value = '';
+}
+$('annGo').addEventListener('click', announce);
+$('annIn').addEventListener('keydown', e => { if (e.key === 'Enter') announce(); });
 </script>
 </body>
 </html>

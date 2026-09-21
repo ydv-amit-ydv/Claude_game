@@ -78,6 +78,45 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
   box-shadow:0 3px 12px rgba(0,0,0,.45)}
 #pad button:active{background:linear-gradient(180deg,var(--gold2),var(--gold));color:#1a1204}
 
+/* ---- the match ticker, bottom left, out of the thumbs' way */
+#feed{position:fixed;left:10px;bottom:calc(152px + var(--safe));z-index:3;width:min(58vw,300px);
+  display:flex;flex-direction:column;gap:4px;pointer-events:none}
+#feed div{font:600 11.5px system-ui;color:#d8e6d2;padding:5px 9px;border-radius:7px;
+  background:linear-gradient(180deg,rgba(10,22,16,.80),rgba(6,14,10,.86));
+  border:1px solid rgba(180,210,170,.18);border-left:2px solid var(--gold);
+  text-shadow:0 1px 3px #000;animation:feedin .35s ease-out}
+@keyframes feedin{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+
+/* ---- talk */
+#talk{position:fixed;left:12px;bottom:calc(14px + var(--safe));z-index:5}
+#talkbtn{width:56px;height:56px;border-radius:999px;font-size:25px;line-height:1;cursor:pointer;
+  background:linear-gradient(180deg,rgba(24,44,66,.94),rgba(10,20,32,.96));
+  border:1px solid var(--goldDim);box-shadow:0 3px 12px rgba(0,0,0,.45)}
+#talkbtn.on{background:linear-gradient(180deg,var(--gold2),var(--gold))}
+#talkbtn.ping{animation:ping 1.1s ease-out 2}
+@keyframes ping{0%,100%{box-shadow:0 3px 12px rgba(0,0,0,.45)}50%{box-shadow:0 0 0 7px rgba(242,178,63,.26)}}
+#talkpop{display:none;position:absolute;left:0;bottom:66px;width:min(80vw,330px);
+  background:linear-gradient(180deg,rgba(12,26,40,.96),rgba(6,14,24,.97));
+  border:1px solid var(--goldDim);border-radius:13px;padding:9px;box-shadow:0 8px 28px rgba(0,0,0,.6)}
+#talkpop.on{display:block}
+#emotebar{display:grid;grid-template-columns:repeat(6,1fr);gap:5px}
+#emotebar button{font-size:21px;padding:8px 0;border-radius:9px;cursor:pointer;
+  background:rgba(255,255,255,.06);border:1px solid rgba(220,200,150,.22)}
+#emotebar button:active{background:var(--gold);transform:scale(.93)}
+#chatbox{margin-top:8px;border-top:1px solid rgba(220,200,150,.16);padding-top:8px}
+#chatlog{max-height:132px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;
+  font:500 12px system-ui;color:#dbe7f2}
+#chatlog b{color:var(--gold2);font-weight:700}
+#chatlog .ann{color:#ffd98a}
+#chatrow{display:flex;gap:5px;margin-top:7px}
+#chatin{flex:1;min-width:0;padding:8px 10px;border-radius:8px;font:500 13px system-ui;
+  background:rgba(255,255,255,.07);border:1px solid rgba(220,200,150,.24);color:#eef4fa}
+#chatin:disabled{opacity:.5}
+#chatsend{padding:8px 13px;border-radius:8px;font:700 12px system-ui;color:#1a1204;cursor:pointer;
+  background:linear-gradient(180deg,var(--gold2),var(--gold));border:1px solid #8a7038}
+#chatsend:disabled{opacity:.45}
+@media (max-width:380px){#feed{width:52vw}#talkbtn{width:50px;height:50px;font-size:22px}}
+
 .ov{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(5,12,20,.78);z-index:6;padding:16px}
 .sheet{width:min(420px,94vw);max-height:92vh;overflow:auto;position:relative;
@@ -155,6 +194,24 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 <div id="toast"></div>
 <div id="banner"></div>
 <button id="viewbtn" type="button">Map view</button>
+<!-- the match ticker: what is happening elsewhere in the garden -->
+<div id="feed" aria-live="polite"></div>
+
+<!-- talk: six taps everyone can use, and open chat once the final starts -->
+<div id="talk">
+  <button id="talkbtn" type="button" aria-label="Talk">💬</button>
+  <div id="talkpop">
+    <div id="emotebar"></div>
+    <div id="chatbox">
+      <div id="chatlog"></div>
+      <div id="chatrow">
+        <input id="chatin" maxlength="120" placeholder="Open talk starts in the final" disabled autocomplete="off">
+        <button id="chatsend" type="button" disabled>Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="pad"><span></span><button data-d="0" aria-label="north">▲</button><span></span><button data-d="3" aria-label="west">◀</button><button data-d="2" aria-label="south">▼</button><button data-d="1" aria-label="east">▶</button></div>
 
 <div id="login" class="ov"><div class="sheet">
@@ -212,6 +269,7 @@ canvas#g{position:fixed;inset:0;width:100%;height:100%;display:block}
 </div></div>
 
 <script src="painted.js"></script>
+<script src="atlas.js"></script>
 <script>
 'use strict';
 const SERVER = new URLSearchParams(location.search).get('server') || '';
@@ -235,6 +293,9 @@ let gold = 0, bankAmt = 0, banked = false, finished = false, phase = 'lobby', jo
 let mode = 'create', delay = 30, roomCode = '', joinCode = '';
 let view = 0;                      // 0 = first person, 1 = over the shoulder, 2 = whole map
 const held = [], pops = [];
+const emotes = new Map();          // id -> { e, t } a bubble over someone's head
+let EMOJI = ['\u{1F44B}', '\u{1F602}', '\u{1F631}', '\u{1F4B0}', '\u{1F3C3}', '\u{1F64F}'];
+let revealFrom = 1, feedLines = [], chatLines = [];
 let goldFlash = 0, badFlash = 0, boatFlash = 0;
 let miniLayer = null;
 
@@ -292,15 +353,18 @@ let chunkT = 0;
 function chunkKey(cx, cy) { return cx * 4096 + cy; }
 
 function bakeChunk(cx, cy, T) {
-  const D = T * 0.46, pad = Math.ceil(D) + 3;
+  // Tall sprites overhang the chunk they stand in, so the canvas carries a
+  // margin on every side and the blit is offset back by it.
+  const padY = Math.ceil(T * 2.6), padX = Math.ceil(T * 1.4);
+  const D = T * 0.46;
   const cvs = document.createElement('canvas');
-  cvs.width = CHUNK * T;
-  cvs.height = CHUNK * T + pad + Math.ceil(T * 0.3);
+  cvs.width = CHUNK * T + padX * 2;
+  cvs.height = CHUNK * T + padY + Math.ceil(T * 0.4);
   const c = cvs.getContext('2d');
   const P = PAINT.PALS[level];
   const x0 = cx * CHUNK, y0 = cy * CHUNK;
   const x1 = Math.min(W - 1, x0 + CHUNK - 1), y1 = Math.min(H - 1, y0 + CHUNK - 1);
-  const ox = -x0 * T, oy = -y0 * T + pad;
+  const ox = -x0 * T + padX, oy = -y0 * T + padY;
 
   for (let y = y0; y <= y1; y++)
     for (let x = x0; x <= x1; x++)
@@ -308,22 +372,93 @@ function bakeChunk(cx, cy, T) {
 
   PAINT.paintWater(c, grid, W, H, x0, x1, y0, y1, ox, oy, T, P, 0);
 
-  // scatter: flowers, bushes, lamps, statues - dressing on open ground
-  for (let y = y0; y <= y1; y++)
-    for (let x = x0; x <= x1; x++)
-      if (grid[y * W + x] === GROUND)
-        PAINT.paintScatter(c, x, y, ox + x * T, oy + y * T, T, P, grid, W, H, level);
-
-  // standing things, front rows last so they overlap correctly
+  // ---- everything that stands up, back row first so the front overlaps it
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const k = grid[y * W + x], sx = ox + x * T, sy = oy + y * T;
-      if (k === WALL) PAINT.paintHedge(c, x, y, sx, sy, T, D, P, grid, W, H);
-      else if (k === PROP) PAINT.paintProp(c, x, y, sx, sy, T, D, P, level);
-      else if (k === SHRINE) PAINT.paintShrine(c, x, y, sx, sy, T, D, P, 0);
+      if (k === WALL) { PAINT.paintHedge(c, x, y, sx, sy, T, D, P, grid, W, H); continue; }
+      if (k === PROP) {
+        // a PROP tile is either a tree or a piece of garden furniture
+        const r = ATLAS.h2(x, y, 101);
+        const foot = sy + T * 0.82;
+        if (r < 0.62) ATLAS.blit(c, ATLAS.tree(T, P, level, treeKind(x, y, r), x * 7 + y), sx + T * .5, foot);
+        else ATLAS.blit(c, ATLAS.prop(T, P, level, (ATLAS.h2(x, y, 103) * ATLAS.PROP_KINDS) | 0, x + y * 3), sx + T * .5, foot);
+        continue;
+      }
+      if (k === SHRINE) {
+        ATLAS.blit(c, ATLAS.shrine(T, P, level, x + y), sx + T * .5, sy + T * .84);
+        continue;
+      }
+      if (k === GROUND || k === FLOWERS) dressTile(c, x, y, sx, sy, T, P);
     }
   }
-  return { cvs, pad, T };
+  return { cvs, padX, padY, T };
+}
+
+/** Which tree grows here - the mix shifts as the levels do. */
+function treeKind(x, y, r) {
+  const n = ATLAS.h2(x, y, 211);
+  if (level === 1 && n < .26) return 4;            // the ruins keep their dead wood
+  if (level === 2) return n < .30 ? 1 : n < .55 ? 4 : 0;
+  if (n < .18) return 1;                           // cypress
+  if (n < .38) return 2;                           // blossom
+  if (n < .48) return 3;                           // fan palm, near the water
+  if (n < .74) return 0;
+  return 5;
+}
+
+/**
+ * Dressing on open ground. Up to three small things per tile, placed at
+ * sub-tile offsets and drawn smallest-first, which is what stops the turf
+ * reading as empty green paint.
+ */
+function dressTile(c, x, y, sx, sy, T, P) {
+  const n = ATLAS.h2(x, y, 307);
+  if (n > .34) return;                              // two tiles in three stay clear
+  // A second tile's worth is a single tuft of grass; only the rarest get
+  // a real bush or a bloom, which is what keeps flowers feeling like finds.
+  const count = n < .05 ? 2 : 1;
+  const bits = [];
+  for (let i = 0; i < count; i++) {
+    const rx = ATLAS.h2(x, y, 311 + i * 7), ry = ATLAS.h2(x, y, 313 + i * 7);
+    const pick = ATLAS.h2(x, y, 317 + i * 11);
+    const px = sx + T * (.20 + rx * .60), py = sy + T * (.50 + ry * .44);
+    let sp;
+    if (pick < .56) sp = ATLAS.tuft(T, P, level, x * 3 + y * 5 + i);
+    else if (pick < .80) sp = ATLAS.bush(T * .8, P, level, x + y * 2 + i);
+    else if (pick < .92) sp = ATLAS.clump(T, P, level, x * 3 + y * 5 + i);
+    else sp = ATLAS.prop(T * .5, P, level, [6, 7, 8, 9, 10][(pick * 97 | 0) % 5], x + y + i);
+    bits.push([py, px, sp]);
+  }
+  bits.sort((a, b) => a[0] - b[0]);
+  for (const [py, px, sp] of bits) ATLAS.blit(c, sp, px, py);
+}
+
+/** The one-pixel-per-tile picture of the whole level, built on first use. */
+let wholeCvs = null;
+function wholeLayer(P) {
+  if (wholeCvs) return wholeCvs;
+  const cvs = document.createElement('canvas');
+  cvs.width = W; cvs.height = H;
+  const c = cvs.getContext('2d');
+  const img = c.createImageData(W, H);
+  const d = img.data;
+  const rgb = hex => {
+    const v = parseInt(hex.slice(1), 16);
+    return [v >> 16, (v >> 8) & 255, v & 255];
+  };
+  const COL = {
+    [WATER]: rgb(P.water[1]), [BRIDGE]: rgb('#8a6a42'), [DOCK]: rgb('#8a6a42'),
+    [WALL]: rgb(P.hedgeMid), [PROP]: rgb(P.canopy[0]), [SHRINE]: rgb('#d8bc70'),
+    [FLOWERS]: rgb('#c86f9e'), [GROUND]: rgb(P.path[0]),
+  };
+  for (let i = 0; i < W * H; i++) {
+    const c3 = COL[grid[i]] || COL[GROUND];
+    d[i * 4] = c3[0]; d[i * 4 + 1] = c3[1]; d[i * 4 + 2] = c3[2]; d[i * 4 + 3] = 255;
+  }
+  c.putImageData(img, 0, 0);
+  wholeCvs = cvs;
+  return cvs;
 }
 
 function getChunk(cx, cy, T) {
@@ -358,20 +493,12 @@ function drawTopDown(now, whole) {
   ctx.fillRect(0, 0, cw, ch);
 
   if (whole) {
-    // the whole garden at a glance: flat, fast, readable
-    for (let y = 0; y < H; y++) {
-      for (let x = 0; x < W; x++) {
-        const k = grid[y * W + x];
-        ctx.fillStyle = k === WATER ? P.water[1]
-          : k === BRIDGE || k === DOCK ? '#8a6a42'
-          : k === WALL ? P.hedgeMid
-          : k === PROP ? P.canopy[0]
-          : k === SHRINE ? '#d8bc70'
-          : k === FLOWERS ? '#c86f9e'
-          : P.path[0];
-        ctx.fillRect(ox + x * T, oy + y * T, T + 1, T + 1);
-      }
-    }
+    // The whole garden at a glance. The terrain never changes during a
+    // level, so it is painted once at one pixel per tile and then scaled -
+    // one drawImage a frame instead of several thousand rectangles.
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(wholeLayer(P), ox, oy, W * T, H * T);
+    ctx.imageSmoothingEnabled = true;
   } else {
     const cx0 = Math.max(0, Math.floor(-ox / T / CHUNK)), cx1 = Math.floor((cw - ox) / T / CHUNK);
     const cy0 = Math.max(0, Math.floor(-oy / T / CHUNK)), cy1 = Math.floor((ch - oy) / T / CHUNK);
@@ -379,7 +506,7 @@ function drawTopDown(now, whole) {
     for (let cy = cy0; cy <= Math.min(maxCY, cy1); cy++) {
       for (let cx = cx0; cx <= Math.min(maxCX, cx1); cx++) {
         const ck = getChunk(cx, cy, T);
-        ctx.drawImage(ck.cvs, ox + cx * CHUNK * T, oy + cy * CHUNK * T - ck.pad);
+        ctx.drawImage(ck.cvs, ox + cx * CHUNK * T - ck.padX, oy + cy * CHUNK * T - ck.padY);
       }
     }
   }
@@ -389,59 +516,118 @@ function drawTopDown(now, whole) {
 
   // live light from the shrines, over the baked chunks
   if (!whole) {
-    ctx.save(); ctx.globalCompositeOperation = 'lighter';
     for (let y = y0; y <= y1; y++) {
       for (let x = x0; x <= x1; x++) {
         if (grid[y * W + x] !== SHRINE) continue;
-        const sx = ox + (x + .5) * T, sy = oy + (y + .6) * T;
         const pul = .5 + .5 * Math.sin(t * 1.8 + x);
-        const gl = ctx.createRadialGradient(sx, sy, 0, sx, sy, T * 2);
-        gl.addColorStop(0, P.glow + (.20 + .12 * pul) + ')');
-        gl.addColorStop(1, P.glow + '0)');
-        ctx.fillStyle = gl; ctx.beginPath(); ctx.arc(sx, sy, T * 2, 0, 6.283); ctx.fill();
+        glow(ox + (x + .5) * T, oy + (y + .1) * T, T * (1.7 + pul * .2),
+             '255,214,132', .10 + pul * .06);
       }
     }
-    ctx.restore();
   }
 
-  // the idol, always a beacon
-  if (gx >= x0 - 3 && gx <= x1 + 3 && gy >= y0 - 3 && gy <= y1 + 3)
-    PAINT.paintIdol(ctx, ox + gx * T, oy + gy * T, T, t);
+  // ---- the idol: a baked sprite under a breathing halo of light
+  if (gx >= x0 - 3 && gx <= x1 + 3 && gy >= y0 - 3 && gy <= y1 + 3) {
+    const ix = ox + (gx + .5) * T, iy = oy + (gy + .92) * T;
+    glow(ix, iy - T * 1.0, T * (2.6 + .3 * Math.sin(t * 1.4)), '255,224,140', .34);
+    ATLAS.blit(ctx, ATLAS.idol(T), ix, iy);
+    glow(ix, iy - T * 1.5, T * (.9 + .12 * Math.sin(t * 2.2)), '255,246,200', .30);
+  }
 
   for (const c of chests.values()) {
     if (c.x < x0 - 1 || c.x > x1 + 1 || c.y < y0 - 1 || c.y > y1 + 1) continue;
-    PAINT.paintChest(ctx, ox + c.x * T, oy + c.y * T, T, t, c.x * 3 + c.y, c.bonus);
+    const bx = ox + (c.x + .5) * T, by = oy + (c.y + .88) * T;
+    const pul = .5 + .5 * Math.sin(t * 2.4 + c.x + c.y);
+    glow(bx, by - T * .3, T * (c.bonus ? 1.5 : 1.0),
+         c.bonus ? '196,150,255' : '255,206,110', (c.bonus ? .34 : .22) + pul * .12);
+    // a chest bobs very slightly, which is what makes it catch the eye
+    ATLAS.blit(ctx, ATLAS.chest(T, c.bonus), bx, by - Math.sin(t * 2 + c.x) * T * .03);
   }
   for (const b of boats) {
     if (b.x < x0 - 1 || b.x > x1 + 1 || b.y < y0 - 1 || b.y > y1 + 1) continue;
-    PAINT.paintBoat(ctx, ox + b.x * T, oy + b.y * T, T, t, b.x + b.y);
+    const bx = ox + (b.x + .5) * T;
+    const by = oy + (b.y + .86) * T + Math.sin(t * 1.3 + b.x) * T * .045;
+    ctx.save();
+    ctx.translate(bx, by); ctx.rotate(Math.sin(t * .9 + b.y) * .035); ctx.translate(-bx, -by);
+    ATLAS.blit(ctx, ATLAS.boat(T, b.x + b.y), bx, by);
+    ctx.restore();
   }
 
-  // everyone on the path, far rows first
+  // everyone on the path, far rows first so nearer figures overlap them
   const figures = [];
-  for (const o of others.values())
-    figures.push({ x: o.dx, y: o.dy, me: false, moving: Math.abs(o.x - o.dx) + Math.abs(o.y - o.dy) > .02 });
-  figures.push({ x: camX - .5, y: camY - .5, me: true, moving: held.length > 0 });
+  for (const o of others.values()) {
+    figures.push({ x: o.dx, y: o.dy, me: false, id: o.id,
+                   name: o.name, face: o.face,
+                   moving: Math.abs(o.x - o.dx) + Math.abs(o.y - o.dy) > .015 });
+  }
+  figures.push({ x: camX - .5, y: camY - .5, me: true, id: me.id,
+                 face: facing, moving: held.length > 0 });
   figures.sort((a, b) => a.y - b.y);
+
+  const FT = T * 1.15;
   for (const f of figures) {
     if (f.x < x0 - 2 || f.x > x1 + 2 || f.y < y0 - 2 || f.y > y1 + 2) continue;
-    const sx = ox + (f.x + .5) * T, sy = oy + (f.y + .5) * T;
-    PAINT.paintPerson(ctx, sx, sy, T * 1.35, {
-      me: f.me, t, moving: f.moving, seed: f.x * 2 + f.y,
-      body: f.me ? '#2f7a3a' : '#54626c', trim: f.me ? '#7fd06a' : '#8c9aa2',
-    });
-    if (f.me && !whole) PAINT.paintPlate(ctx, sx, sy - T * .62, banked ? 'You ✓' : 'You', '#ffd45e', T);
+    const sx = ox + (f.x + .5) * T, sy = oy + (f.y + .94) * T;
+    // the walk cycle advances with the clock while the figure is moving, and
+    // settles on the standing frame the moment it stops
+    const fr = f.moving ? ((t * 7 + f.x + f.y) | 0) % ATLAS.WALK_FRAMES : 0;
+    if (f.me) ATLAS.blit(ctx, ATLAS.marker(T), sx, sy + T * .1);
+    ATLAS.blit(ctx, ATLAS.person(FT, f.face || 0, fr,
+                                 f.me ? '#b8452e' : '#3f4f78',
+                                 f.me ? '#ffd45e' : '#8fa4d6', 0),
+               sx, sy);
+    if (whole) continue;
+    const top = sy - FT * 1.62;
+    if (f.me) PAINT.paintPlate(ctx, sx, top, banked ? 'You ✓ ' + bankAmt : 'You', '#ffd45e', T);
+    else if (f.name) PAINT.paintPlate(ctx, sx, top, f.name, '#cfe0ff', T);
+    const em = emotes.get(f.id);
+    if (em && now - em.t < 2000) drawEmote(sx + T * .5, top - T * .95, em.e, (now - em.t) / 2000, T);
   }
 
   if (!whole) PAINT.paintAir(ctx, ox, oy, T, W, H, camX, camY, t, level, cw, ch);
 
-  if (!whole) {
-    const vg = ctx.createRadialGradient(cw / 2, ch / 2, Math.min(cw, ch) * .34,
-                                        cw / 2, ch / 2, Math.max(cw, ch) * .72);
-    vg.addColorStop(0, 'rgba(0,0,0,0)');
-    vg.addColorStop(1, level === 2 ? 'rgba(4,2,0,.6)' : 'rgba(8,18,10,.42)');
-    ctx.fillStyle = vg; ctx.fillRect(0, 0, cw, ch);
-  }
+  if (!whole) grade();
+}
+
+/** An additive pool of light. Used for the idol, chests and shrine lamps. */
+function glow(x, y, r, rgb, a) {
+  if (r <= 0) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, `rgba(${rgb},${a})`);
+  g.addColorStop(.45, `rgba(${rgb},${a * .4})`);
+  g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * The finishing pass: one warm-to-cool wash per level, then a vignette.
+ * It is two rectangles of work, and it does more for how the garden feels
+ * than anything else in this file.
+ */
+const GRADE = [
+  { warm: 'rgba(255,206,120,.07)', cool: 'rgba(24,60,104,.09)', vig: 'rgba(8,24,12,.50)' },
+  { warm: 'rgba(214,180,124,.05)', cool: 'rgba(54,74,64,.12)', vig: 'rgba(18,22,14,.56)' },
+  { warm: 'rgba(255,170,70,.09)', cool: 'rgba(36,18,54,.12)', vig: 'rgba(6,3,0,.64)' },
+];
+function grade() {
+  const G = GRADE[level] || GRADE[0];
+  ctx.save();
+  ctx.globalCompositeOperation = 'soft-light';
+  const wash = ctx.createLinearGradient(0, 0, cw * .6, ch);
+  wash.addColorStop(0, G.warm);
+  wash.addColorStop(1, G.cool);
+  ctx.fillStyle = wash; ctx.fillRect(0, 0, cw, ch);
+  ctx.restore();
+
+  const vg = ctx.createRadialGradient(cw / 2, ch * .46, Math.min(cw, ch) * .32,
+                                      cw / 2, ch / 2, Math.max(cw, ch) * .74);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, G.vig);
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, cw, ch);
 }
 
 // ---------- minimap
@@ -496,6 +682,8 @@ function connect() {
 function handle(m) {
   switch (m.t) {
     case 'w':
+      if (m.cfg && m.cfg.emotes) { EMOJI = m.cfg.emotes; buildEmoteBar(); }
+      if (m.cfg && typeof m.cfg.revealFrom === 'number') revealFrom = m.cfg.revealFrom;
       me.id = m.id; roomCode = m.code; MI = m.cfg.mi; joined = true;
       mode = 'join'; joinCode = roomCode;
       setStage(m.stage);
@@ -533,6 +721,18 @@ function handle(m) {
       } else {
         toast('The idol will keep whatever you bring back', 'good');
       }
+      break;
+    case 'em':
+      emotes.set(m.id, { e: m.e, t: performance.now() });
+      break;
+    case 'feed': pushFeed(m.x); break;
+    case 'say': pushChat(m.n, m.x); break;
+    case 'sayErr': toast(m.msg, 'bad'); break;
+    case 'ann':
+      pushChat('Organiser', m.x, true);
+      banner('<b>' + esc(m.x) + '</b>');
+      setTimeout(() => { if (phase === 'play') banner(''); }, 6000);
+      beep(523, 784, .4, 'triangle', .07);
       break;
     case 'loot': onLoot(m); break;
     case 'm': onMeta(m); break;
@@ -584,12 +784,15 @@ function onLevelStart(m) {
     boats.push({ x: a % W, y: (a / W) | 0 });
     boats.push({ x: b % W, y: (b / W) | 0 });
   });
-  others.clear(); pops.length = 0;
+  others.clear(); pops.length = 0; emotes.clear();
+  feedLines = []; chatLines = []; renderFeed(); $('chatlog').textContent = '';
+  setChatEnabled(m.stage.idx === 2);
+  ATLAS.clear();                     // sprites are baked per level and per size
   gold = 0; bankAmt = 0; banked = false; finished = false; phase = 'play';
   $('gold').textContent = '0'; $('bankAmt').textContent = '0';
   ['wait', 'elim', 'champ'].forEach(id => $(id).style.display = 'none');
   banner('');
-  buildMini(); chunks.clear();
+  buildMini(); chunks.clear(); wholeCvs = null;
   toast(m.stage.name + ' — find the idol');
   beep(392, 587, .3, 'triangle', .05);
 }
@@ -608,20 +811,43 @@ function onPos(m) {
   if (m.boat) { toast('The ferry carries you across', 'boat'); boatFlash = 1; beep(220, 440, .5, 'sine', .06); }
   if (m.fin && !finished) {
     finished = true;
-    banner('You reached the idol<small>Your score is locked in — wait for the level to end</small>');
+    banner('You reached the idol<small>That gold is safe. Go gather more and run it back.</small>');
+    setTimeout(() => { if (phase === 'play') banner(''); }, 4200);
     [523, 659, 784, 1046].forEach((f, i) => beep(f, f * 1.01, .28, 'triangle', .06, i * .09));
   }
 }
 
 function onOthers(list) {
   const keep = new Set();
-  for (const [id, x, y] of list) {
+  for (const [id, x, y, nm] of list) {
     keep.add(id);
     const o = others.get(id);
-    if (!o) others.set(id, { x, y, dx: x, dy: y });
-    else { o.x = x; o.y = y; if (Math.abs(o.dx - x) + Math.abs(o.dy - y) > 4) { o.dx = x; o.dy = y; } }
+    if (!o) { others.set(id, { id, x, y, dx: x, dy: y, name: nm || '', face: 2 }); continue; }
+    // work out which way they are walking, so the sprite turns to match
+    if (x !== o.x || y !== o.y) o.face = x > o.x ? 1 : x < o.x ? 3 : y > o.y ? 2 : 0;
+    o.x = x; o.y = y; o.name = nm || '';
+    if (Math.abs(o.dx - x) + Math.abs(o.dy - y) > 4) { o.dx = x; o.dy = y; }   // teleported
   }
   for (const id of others.keys()) if (!keep.has(id)) others.delete(id);
+}
+
+/** A speech bubble carrying one emoji, rising and fading as it goes. */
+function drawEmote(x, y, idx, a, T) {
+  const r = Math.max(13, T * .40), rise = a * r * .9;
+  const cy = y - rise;
+  ctx.save();
+  ctx.globalAlpha = a > .75 ? (1 - a) * 4 : 1;
+  ctx.fillStyle = 'rgba(252,250,242,.94)';
+  ctx.strokeStyle = 'rgba(30,44,32,.5)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x, cy, r, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - r * .3, cy + r * .78); ctx.lineTo(x, cy + r * 1.3); ctx.lineTo(x + r * .1, cy + r * .82);
+  ctx.closePath(); ctx.fill();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `${Math.round(r * 1.2)}px system-ui, "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+  ctx.fillText(EMOJI[idx] || '?', x, cy + r * .06);
+  ctx.textBaseline = 'alphabetic';
+  ctx.restore();
 }
 
 function onChest(m) {
@@ -654,6 +880,101 @@ function onMeta(m) {
     const s2 = document.createElement('span'); s2.className = 'sc'; s2.textContent = sc;
     li.append(pos, pip, nm, s2); ol.appendChild(li);
   });
+}
+
+
+// ================================================================ talk
+// Three ways to speak, in rising order of how much they can go wrong:
+// emotes (anyone, always), the organiser's banner, and open chat, which
+// only unlocks in the final where everyone already has a name.
+const FEED_SHOW = 4;
+
+function esc(t) {
+  return String(t).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function pushFeed(text) {
+  feedLines.push({ text, t: performance.now() });
+  if (feedLines.length > FEED_SHOW) feedLines.shift();
+  renderFeed();
+}
+
+function renderFeed() {
+  const el = $('feed');
+  el.textContent = '';
+  for (const l of feedLines) {
+    const d = document.createElement('div');
+    d.textContent = l.text;
+    el.appendChild(d);
+  }
+}
+
+// lines age out on their own, so the ticker empties when the garden is quiet
+setInterval(() => {
+  const now = performance.now();
+  const before = feedLines.length;
+  feedLines = feedLines.filter(l => now - l.t < 9000);
+  if (feedLines.length !== before) renderFeed();
+}, 1500);
+
+function pushChat(who, text, ann) {
+  chatLines.push({ who, text, ann });
+  if (chatLines.length > 40) chatLines.shift();
+  const log = $('chatlog');
+  log.textContent = '';
+  for (const l of chatLines) {
+    const d = document.createElement('div');
+    if (l.ann) d.className = 'ann';
+    const b = document.createElement('b');
+    b.textContent = l.who + ': ';
+    d.append(b, document.createTextNode(l.text));
+    log.appendChild(d);
+  }
+  log.scrollTop = log.scrollHeight;
+  if (!$('talkpop').classList.contains('on')) {
+    $('talkbtn').classList.add('ping');
+    setTimeout(() => $('talkbtn').classList.remove('ping'), 2400);
+  }
+}
+
+function buildEmoteBar() {
+  const bar = $('emotebar');
+  bar.textContent = '';
+  EMOJI.forEach((ch, i) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = ch; b.title = 'Send ' + ch;
+    b.addEventListener('click', () => {
+      send({ t: 'em', e: i });
+      emotes.set(me.id, { e: i, t: performance.now() });   // show your own at once
+      beep(660, 880, .12, 'triangle', .04);
+    });
+    bar.appendChild(b);
+  });
+}
+
+$('talkbtn').addEventListener('click', () => {
+  const on = $('talkpop').classList.toggle('on');
+  $('talkbtn').classList.toggle('on', on);
+  $('talkbtn').classList.remove('ping');
+  if (on && !$('chatin').disabled) $('chatin').focus();
+});
+
+function sendChat() {
+  const v = $('chatin').value.trim();
+  if (!v) return;
+  send({ t: 'say', x: v });
+  $('chatin').value = '';
+}
+$('chatsend').addEventListener('click', sendChat);
+$('chatin').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendChat(); } });
+
+/** Open talk unlocks for the final; before that the box explains itself. */
+function setChatEnabled(on) {
+  $('chatin').disabled = !on;
+  $('chatsend').disabled = !on;
+  $('chatin').placeholder = on ? 'Say something to the other nine'
+                               : 'Open talk starts in the final';
 }
 
 // ================================================================ input
@@ -696,7 +1017,7 @@ $('viewbtn').addEventListener('click', () => {
 $('viewbtn').textContent = VIEW_NAMES[0];
 
 function tryMove(now) {
-  if (phase !== 'play' || finished || !joined || !grid || now - lastMove < MI * 1.03) return;
+  if (phase !== 'play' || !joined || !grid || now - lastMove < MI * 1.03) return;
   for (let i = held.length - 1; i >= 0; i--) {
     const d = held[i], nx = px + DX[d], ny = py + DY[d];
     if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
