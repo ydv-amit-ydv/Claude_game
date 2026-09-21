@@ -737,50 +737,41 @@ function drawMapMarkers(figures, ox, oy, T, t) {
   const ix = px2(gx), iy = py2(gy);
   const pul = .5 + .5 * Math.sin(t * 2.2);
 
-  // ---- the road home: a dashed line from you to the idol
-  const dx = ix - mx, dy = iy - my, len = Math.hypot(dx, dy);
-  if (len > S * 1.6) {
-    const ux = dx / len, uy = dy / len;
-    const ax = mx + ux * S * .8, ay = my + uy * S * .8;
-    const bx2 = ix - ux * S * .8, by2 = iy - uy * S * .8;
-    ctx.save();
-    ctx.lineCap = 'round';
-    // a dark backing stroke, so the line stays readable over pale paths and
-    // dark hedges alike
-    ctx.strokeStyle = 'rgba(12,22,14,.55)';
-    ctx.lineWidth = Math.max(5, S * .30);
-    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
-    ctx.strokeStyle = `rgba(255,222,126,${.80 + pul * .2})`;
-    ctx.lineWidth = Math.max(3, S * .19);
-    ctx.setLineDash([S * .55, S * .45]);
-    ctx.lineDashOffset = -t * S * 2.6;        // it flows toward the idol
-    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx2, by2); ctx.stroke();
-    ctx.restore();
-
-    // chevrons marching up the line, clear of the distance label
-    const a = Math.atan2(dy, dx);
-    for (const at of [.26, .74]) {
-      ctx.save();
-      ctx.translate(mx + ux * len * at, my + uy * len * at); ctx.rotate(a);
-      ctx.fillStyle = 'rgba(12,22,14,.6)';
-      ctx.beginPath();
-      ctx.moveTo(S * .70, 0); ctx.lineTo(-S * .30, -S * .48); ctx.lineTo(-S * .06, 0);
-      ctx.lineTo(-S * .30, S * .48); ctx.closePath(); ctx.fill();
-      ctx.fillStyle = `rgba(255,236,168,${.85 + pul * .15})`;
-      ctx.beginPath();
-      ctx.moveTo(S * .56, 0); ctx.lineTo(-S * .22, -S * .36); ctx.lineTo(-S * .04, 0);
-      ctx.lineTo(-S * .22, S * .36); ctx.closePath(); ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  // ---- chests and ferry landings, as symbols rather than shrunken sprites
-  // quiet, so a hundred of them read as scattered treasure rather than
-  // shouting over the two markers that actually matter
+  // ---- the treasure worth walking to.
+  //
+  // A hundred faint specks tells you nothing, so the map picks out a few
+  // chests that are both close enough to reach and worth the trip, and
+  // draws those large with what they hold. Everything else stays a quiet
+  // speck, there for texture rather than for reading.
+  const HILITE = 6, REACH = 26;
+  const worth = [];
   for (const c of chests.values()) {
+    const d = Math.abs(c.x - selfX) + Math.abs(c.y - selfY);
+    if (d > REACH) continue;
+    // a rich chest a little further off beats a poor one underfoot
+    worth.push({ c, d, rank: (c.v || 0) * (c.bonus ? 2.2 : 1) - d * 0.55 });
+  }
+  worth.sort((a, b) => b.rank - a.rank);
+  // Spread them out: two coins on top of each other hide each other's label
+  // and say nothing extra, so a richer one wins its patch of map outright.
+  // the pin and the star hold their own ground: a coin tucked under either
+  // is a label nobody can read, and a chest you are standing on needs no map
+  const gap = S * 1.5, shown = [];
+  const reserved = [{ x: mx, y: my - S * .8 }, { x: ix, y: iy }];
+  for (const e of worth) {
+    if (shown.length >= HILITE) break;
+    const x = px2(e.c.x), y = py2(e.c.y);
+    if (shown.some(o => Math.abs(o.x - x) < gap && Math.abs(o.y - y) < gap)) continue;
+    if (reserved.some(o => Math.abs(o.x - x) < gap * 1.15 && Math.abs(o.y - y) < gap * 1.15)) continue;
+    shown.push({ e, x, y });
+  }
+  const picked = new Set(shown.map(o => o.e.c));
+
+  for (const c of chests.values()) {
+    if (picked.has(c)) continue;
     const x = px2(c.x), y = py2(c.y);
-    ctx.fillStyle = c.bonus ? 'rgba(206,166,255,.92)' : 'rgba(236,186,92,.62)';
-    ctx.beginPath(); ctx.arc(x, y, S * (c.bonus ? .22 : .13), 0, 6.283); ctx.fill();
+    ctx.fillStyle = c.bonus ? 'rgba(206,166,255,.75)' : 'rgba(236,186,92,.42)';
+    ctx.beginPath(); ctx.arc(x, y, S * (c.bonus ? .18 : .11), 0, 6.283); ctx.fill();
   }
   for (const b of boats) {
     const x = px2(b.x), y = py2(b.y);
@@ -798,6 +789,46 @@ function drawMapMarkers(figures, ox, oy, T, t) {
     ctx.beginPath(); ctx.arc(x, y, S * .34, 0, 6.283); ctx.fill();
     ctx.fillStyle = '#8fa4d6';
     ctx.beginPath(); ctx.arc(x, y, S * .25, 0, 6.283); ctx.fill();
+  }
+
+  // ---- the picked chests, large, labelled, and pulsing gently
+  for (const o of shown) {
+    const c = o.e.c, x = o.x, y = o.y;
+    const r = S * (c.bonus ? .62 : .48);
+    const gl = ctx.createRadialGradient(x, y, 0, x, y, r * 2.4);
+    gl.addColorStop(0, c.bonus ? 'rgba(198,150,255,.45)' : 'rgba(255,206,110,.40)');
+    gl.addColorStop(1, 'rgba(255,206,110,0)');
+    ctx.fillStyle = gl;
+    ctx.beginPath(); ctx.arc(x, y, r * 2.4, 0, 6.283); ctx.fill();
+
+    // a little coin, rimmed dark so it holds up over pale paths
+    const g = ctx.createLinearGradient(x, y - r, x, y + r);
+    if (c.bonus) { g.addColorStop(0, '#e6ccff'); g.addColorStop(1, '#9a6fd6'); }
+    else { g.addColorStop(0, '#ffe9a8'); g.addColorStop(1, '#d99a26'); }
+    ctx.fillStyle = g;
+    ctx.strokeStyle = 'rgba(30,20,6,.78)';
+    ctx.lineWidth = Math.max(1.4, S * .09);
+    ctx.beginPath();
+    ctx.arc(x, y, r * (1 + pul * .06), 0, 6.283);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.beginPath(); ctx.ellipse(x - r * .28, y - r * .3, r * .26, r * .16, -.5, 0, 6.283); ctx.fill();
+
+    // What it holds, on a dark chip. The chip sits on the side away from
+    // your pin, so a coin just above you does not drop its label onto it.
+    const label = String(c.v || '');
+    if (label && S > 14) {
+      ctx.font = `800 ${Math.round(S * .52)}px system-ui`;
+      ctx.textAlign = 'center';
+      const w2 = ctx.measureText(label).width;
+      const above = y < my;
+      const ly = above ? y - r - S * .46 : y + r + S * .46;
+      ctx.fillStyle = 'rgba(8,16,24,.85)';
+      roundRectPath(ctx, x - w2 / 2 - S * .2, ly - S * .38, w2 + S * .4, S * .7, S * .24);
+      ctx.fill();
+      ctx.fillStyle = c.bonus ? '#e0c6ff' : '#ffd45e';
+      ctx.fillText(label, x, ly + S * .16);
+    }
   }
 
   // ---- the idol: a gold star you can pick out at a glance
@@ -853,21 +884,6 @@ function drawMapMarkers(figures, ox, oy, T, t) {
   ctx.closePath(); ctx.fill();
   ctx.restore();
 
-  // ---- how far there is to go, on the line itself
-  if (len > S * 3) {
-    const lx = mx + dx * .5, ly = my + dy * .5 - S * .95;
-    const label = stepsLeft > 0 ? stepsLeft + ' steps' : '';
-    if (label) {
-      ctx.font = `800 ${Math.round(S * .62)}px system-ui`;
-      ctx.textAlign = 'center';
-      const wgt = ctx.measureText(label).width;
-      ctx.fillStyle = 'rgba(8,16,24,.82)';
-      roundRectPath(ctx, lx - wgt / 2 - S * .28, ly - S * .48, wgt + S * .56, S * .86, S * .3);
-      ctx.fill();
-      ctx.fillStyle = '#ffd45e';
-      ctx.fillText(label, lx, ly + S * .2);
-    }
-  }
 }
 
 function roundRectPath(c, x, y, w, h, r) {
